@@ -2,28 +2,30 @@ import torch
 import math
 from utils import make_z
 from control_params import ControlParameter
+import scipy.signal
 
 class VocalTractProxy:
-    def __init__(self, n_points) -> None:
+    def __init__(self, n_points, scale: float = 1.0) -> None:
 
         self.n_points = n_points
+        self.scale = scale
 
         self.tongue_diam_min = 2.05
         self.tongue_diam_max = 3.5
 
-        self.tongue_idx_min = 12
-        self.tongue_idx_max = 29
+        self.tongue_idx_min = math.floor(12 * scale)
+        self.tongue_idx_max = math.floor(29 * scale)
         self.tongue_idx_center = (self.tongue_idx_max + self.tongue_idx_min) / 2
 
-        self.constr_idx_min = 2
-        self.constr_idx_max = 43
+        self.constr_idx_min = math.floor(2 * scale)
+        self.constr_idx_max = math.floor(43 * scale)
 
         self.constr_diam_min = 0.1
         self.constr_diam_max = 3
         
-        self.blade_start = 10
-        self.lip_start = 39
-        self.tip_start = 32
+        self.blade_start = math.floor(10 * scale)
+        self.lip_start = math.floor(39 * scale)
+        self.tip_start = math.floor(32 * scale)
         self.grid_offset = 1.7
         
         self.loss_factor = 0.999
@@ -53,10 +55,10 @@ class VocalTractProxy:
         self.curve_mod[-1] = 0.8
         self.curve_mod[-2] = 0.94
         
-        self.base_diam = torch.tensor([0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 1.1, 1.1, 1.1, 1.1, 1.1, 1.5,
+        self.base_diam = torch.tensor(scipy.signal.resample([0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 1.1, 1.1, 1.1, 1.1, 1.1, 1.5,
        1.5, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5,
        1.5, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5,
-       1.5, 1.5, 1.5, 1.5, 1.5])
+       1.5, 1.5, 1.5, 1.5, 1.5], math.floor(44 * scale)))
     
     
     def create_tongue_idx_param(self, init_val=None, requires_grad=True):
@@ -167,7 +169,7 @@ class VocalTractProxy:
         curr_diam = torch.tensor(curr_diam)        
 
         width = 2
-        if constr_idx < 25: width = 10
+        if constr_idx < math.floor(25 * self.scale): width = 10
         elif constr_idx > self.tip_start: width = 5
         else: width = 10 - 5*(constr_idx-25)/(self.tip_start-25)
         
