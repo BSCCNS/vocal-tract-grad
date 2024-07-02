@@ -15,9 +15,9 @@ def to_log_mag(freq_response, rel_to_max=True, eps=1e-7):
         div = 1.0
     return 20 * torch.log10(mag / div + eps)
 
-def weighted_log_mag_mse_loss(pred, target):
+def weighted_log_mag_mse_loss(pred, target, sr=48000):
     nfft = (pred.numel() - 1) * 2
-    fftfreqs = librosa.fft_frequencies(sr=48000, n_fft=nfft)
+    fftfreqs = librosa.fft_frequencies(sr=sr, n_fft=nfft)
     amplitude_cweight = torch.tensor(librosa.db_to_power(librosa.C_weighting(fftfreqs)))
     pred = to_log_mag(pred * amplitude_cweight)
     target = to_log_mag(target * amplitude_cweight)
