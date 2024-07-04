@@ -158,7 +158,7 @@ class VocalTractProxy:
             constrs = constrs.get_denormed()
         
         #return torch.cat([curr_diam[:self.constr_idx_min], curr_diam[self.constr_idx_min:] * (1 - constrs) + self.constr_diam_min * constrs])
-        return torch.cat([curr_diam[:self.constr_idx_min], curr_diam[self.constr_idx_min:] * (1 - constrs)])
+        return torch.cat([curr_diam[:self.constr_idx_min], torch.clamp(curr_diam[self.constr_idx_min:] * (1 - constrs), self.constr_diam_min, self.constr_diam_max)])
     
     def apply_single_constriction(self, constr_idx : float, constr_diam, curr_diam):
         
