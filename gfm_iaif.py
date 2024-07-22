@@ -27,9 +27,10 @@ def gfm_iaif(x, n_vt=48, n_gl=3, d=0.99, win=None):
     lip_coeffs = np.array([1, -d])
     
     # Gross glottis estimation
-    gv_preframe = lfilter([1], lip_coeffs, x_preframe)
     gv = lfilter([1], lip_coeffs, x)
-    
+    gv_preframe = lfilter([1], lip_coeffs, x_preframe)
+
+    # First 1st order LPC estimation
     glott_coeffs_gross = librosa.lpc(gv * win, order=1)
     
     for i in range(n_gl-1):
