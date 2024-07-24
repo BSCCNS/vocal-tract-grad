@@ -76,7 +76,7 @@ class Glottis:
         
         n_frames = tenseness.shape[0]
         if n_frames > 1: 
-            n_frames -= 1
+            n_frames -= 1 # TODO Porque se quita un frame????
             n = frame_len * n_frames
             wav_len = 1 / torch.flatten(frames_to_samples(freq, frame_len))
             t = torch.arange(n) * self.T
