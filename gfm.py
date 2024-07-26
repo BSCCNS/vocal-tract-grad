@@ -251,93 +251,21 @@ class Resynth:
         )
         nframes = input_frames.shape[1]
 
-        # FIRST STAGE
-        # Get the LPC coefficients
-        #
+        # get the LPC coefficients using the GFM-IAIB method
         vtcoeffs, glcoeffs, lipcoeffs = self.estimate_coeffs(audio_input)
 
-        #
-        # let's get the glottis source isolated
-        glottis_iaif = np.zeros_like(audio_input)
-        # vocalt_iaif = np.zeros_like(audio_input)
-        for i in range(nframes):
-            frame = input_frames[:, i]
-            framepad = np.pad(frame, ((0, self.ncilinders + 1)), mode="edge")
-            idx = np.arange(
-                librosa.frames_to_samples(i, hop_length=inner_hoplength),
-                librosa.frames_to_samples(i, hop_length=inner_hoplength)
-                + inner_framelength,
-            )
-            glottis_iaif[idx] += scipy.signal.lfilter(vtcoeffs[i, :], [1], framepad)[
-                self.ncilinders + 1 :
-            ] * scipy.signal.get_window("hamming", inner_framelength)
-            # vocalt_iaif[idx]  += scipy.signal.lfilter(glcoeffs[i,:], [1], framepad)[self.ncilinders+1:] * scipy.signal.get_window("hamming", inner_framelength)
-        glottis_frames = librosa.util.frame(
-            glottis_iaif, frame_length=inner_framelength, hop_length=inner_hoplength
-        )
-        #
-        # and we can now obtain the excitation, removing ALSO the glottis filter
-        # no_glottis = np.zeros_like(audio_input)
-        # for i in range(nframes):
-        #     frame = glottis_frames[:, i]
-        #     framepad = np.pad(frame, ((0,self.ncilinders+1)), mode='edge')
-        #     idx = np.arange(librosa.frames_to_samples(i, hop_length=inner_hoplength), librosa.frames_to_samples(i, hop_length=inner_hoplength)+inner_framelength)
-        #     no_glottis[idx] += scipy.signal.lfilter(glcoeffs[i,:], [1], framepad)[self.ncilinders+1:] * scipy.signal.get_window("hamming", inner_framelength)
-        # no_glottis_frames = librosa.util.frame(no_glottis, frame_length=inner_framelength, hop_length=inner_hoplength)
+        # isolate glottis signal
+        glottis_signal = self.filter_frames(input_frames, vtcoeffs, np.ones([1]))
+        glottis_frames = librosa.util.frame(glottis_signal, frame_length=self.framelength, hop_length=self.hoplength)
 
-        # # SECOND STAGE
-        # # Identify the current filter pàrameters (frequencies, etc)
-        # #
-        # # some frames have sound issues and the filters are not physical, we must skip them
-        valid_frame_mask = np.empty(nframes)
+        # isolate excitation signal
+        excitation_signal = self.filter_frames(glottis_frames, glcoeffs, np.ones([1]))
+        excitation_frames = librosa.util.frame(excitation_signal, frame_length=self.framelength, hop_length=self.hoplength)
 
-        # # Glottis roots
-        # glottis_poles = np.empty((nframes,3),dtype=np.complex128)
-        # glottis_phase_poles = np.empty((nframes,1),dtype=np.complex128)
-        # glottis_real_poles = np.empty((nframes,1),dtype=np.complex128)
-        # glottis_frequencies = np.empty((nframes,1))
-        # for n in range(nframes):
-        #     poles = np.roots(glcoeffs[n,:])
-        #     phase_poles = np.array([r for r in poles if np.imag(r) > 0])
-        #     if phase_poles.shape[0]==1:
-        #         glottis_poles[n,:] = poles.copy()
-        #         glottis_phase_poles[n,:] = phase_poles.copy()
-        #         glottis_real_poles[n,:] = np.array([r for r in poles if np.imag(r) == 0])
-        #         glottis_frequencies[n,:] = np.arctan2(phase_poles.imag, phase_poles.real) * (self.fs / (2 * np.pi))
-        #         valid_frame_mask[n] = True
-        #     else:
-        #         glottis_poles[n,:] = 0
-        #         glottis_phase_poles[n,:] = 0
-        #         glottis_real_poles[n,:] = 0
-        #         glottis_frequencies[n,:] = 0
-        #         valid_frame_mask[n] = False
-
-        lpc_glottis = np.zeros_like(glcoeffs)
-        for i in range(nframes):
-            frame = glottis_frames[:, i]
-            lpc_glottis[i, :] = librosa.lpc(frame, order=3)
-        # LPC Glottis roots
-        glottis_poles = np.empty((nframes, 3), dtype=np.complex128)
-        glottis_phase_poles = np.empty((nframes, 1), dtype=np.complex128)
-        glottis_real_poles = np.empty((nframes, 1), dtype=np.complex128)
-        glottis_frequencies = np.empty((nframes, 1))
-        glottis_qualityfactor = np.empty((nframes, 1))
-        for n in range(nframes):
-            poles = np.roots(lpc_glottis[n, :])
-            phase_poles = np.array([r for r in poles if np.imag(r) > 0])
-            if phase_poles.shape[0] == 1:
-                glottis_poles[n, :] = poles
-                glottis_phase_poles[n, :] = phase_poles
-                glottis_real_poles[n, :] = np.array(
-                    [r for r in poles if np.imag(r) == 0]
-                )
-                glottis_frequencies[n, :] = np.arctan2(
-                    phase_poles.imag, phase_poles.real
-                ) * (self.fs / (2 * np.pi))
-                glottis_qualityfactor[n, :] = np.angle(np.log(phase_poles))
-                valid_frame_mask[n] = True
-            else:
-                valid_frame_mask[n] = False
+        # calculate resonant frequency and quality factor from glottis poles
+        glottis_poles = np.apply_along_axis(np.roots, 1, glcoeffs.astype(np.complex64))
+        glottis_freqs = np.max(np.angle(glottis_poles), axis=1)
+        glottis_qs = ...
 
         glottis_formant = glottis_frequencies.mean()
         #
@@ -612,6 +540,36 @@ class Resynth:
             vtcoeffs[i, :], glcoeffs[i, :], lipcoeffs[i, :] = gfm_iaif(frame, n_vt=self.ncilinders)
 
         return vtcoeffs, glcoeffs, lipcoeffs
+    
+    def filter_frames(self, data, b, a, framelength=None, hoplength=None):
+        if framelength == None:
+            framelength = self.framelength
+        if hoplength == None:
+            hoplength = self.hoplength
+
+        nframes = data.shape[1]
+
+        if a.ndim == 1:
+            b = np.repeat(np.reshape(b, [1, -1]), nframes, axis=0)
+        if a.ndim == 1:
+            a = np.repeat(np.reshape(a, [1, -1]), nframes, axis=0)
+
+        out = np.zeros_like(data)
+        data = librosa.util.frame(data, frame_length=framelength, hop_length=hoplength)
+
+        for i in range(nframes):
+            frame = data[:, i]
+            framepad = np.pad(frame, ((0, self.ncilinders + 1)), mode="edge")
+            
+            idx = np.arange(
+                librosa.frames_to_samples(i, hop_length=hoplength),
+                librosa.frames_to_samples(i, hop_length=hoplength) + framelength,
+            )
+
+            out[idx] += scipy.signal.lfilter(b[i, :], a[i, :], framepad)[self.ncilinders + 1 :] * scipy.signal.get_window("hamming", framelength)
+
+        return out
+
 
 """
 MORE UNUSED CODE
