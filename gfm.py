@@ -1,11 +1,9 @@
 import librosa
 import numpy as np
 import scipy
+import threading
 
 from gfm_iaif import gfm_iaif
-
-from glottis import Glottis
-import torch
 
 import sounddevice as sd
 
@@ -19,15 +17,16 @@ from tract_proxy import VocalTractProxy
 from optimize import TractControlsOptimizer
 """
 
+current_frame = 0
 class Resynth:
-    def __init__(self, framelength=512, hoplength=64, fmin=70, fmax = 500, ncilinders = 44, fs=44100):
+    def __init__(self, framelength=1024, hoplength=256, fmin=70, fmax = 500, ncilinders = 44, fs=44100):
         self.framelength = framelength
         self.hoplength = hoplength
         self.fmin = fmin
         self.fmax = fmax
         self.ncilinders = ncilinders
         self.fs = fs
-        self.process_blocks = 4
+        self.process_blocks = 1
         self.stream = None
         self.prev_frames = 2
         self.prev_audio_orig = None
@@ -74,56 +73,67 @@ class Resynth:
     def update_parameter(self,param,value):
         self.params.update({param: value})
 
-    def play_audio(self,audio_file):
-        input_wav = librosa.to_mono(audio_file.T)
-        # read parameters
-        if "vt_shifts" in self.params:
-            vt_shifts = self.params['vt_shifts']
-        else:
-            vt_shifts = []
+    def play_audio(self,audio_file):  
+        global current_frame      
+        # input_wav = librosa.to_mono(audio_file.T)
+        # # read parameters
+        # if "vt_shifts" in self.params:
+        #     vt_shifts = self.params['vt_shifts']
+        # else:
+        #     vt_shifts = []
 
-        if "glottis_shifts" in self.params:
-            glottis_shifts = self.params['glottis_shifts']  
-        else:
-            glottis_shifts = None
+        # if "glottis_shifts" in self.params:
+        #     glottis_shifts = self.params['glottis_shifts']  
+        # else:
+        #     glottis_shifts = None
             
-        if "tenseness_factor" in self.params:
-            tenseness_factor = self.params['tenseness_factor']  
-        else:
-            tenseness_factor = None        
-        output_wav = self.process(input_wav, vt_shifts=vt_shifts, 
-                           glottis_shift=glottis_shifts, 
-                           tenseness_factor=tenseness_factor)        
-        sd.play(output_wav, samplerate=self.fs)
+        # if "tenseness_factor" in self.params:
+        #     tenseness_factor = self.params['tenseness_factor']  
+        # else:
+        #     tenseness_factor = None        
+
+        # output_wav = self.process(input_wav, vt_shifts=vt_shifts, 
+        #                    glottis_shift=glottis_shifts, 
+        #                    tenseness_factor=tenseness_factor)        
+        # sd.play(output_wav, samplerate=self.fs)
+        # self.fs = 44100
+        # return
+        # TODO Play the file using real time engine and not full file conversion
+
+        current_frame = 0
+
+        self.prev_audio_orig = np.zeros( self.prev_frames * self.framelength, dtype="float32")        
+
+        def callback(outdata, frames, time, status):
+            global current_frame
+            chunksize = min(audio_file.shape[0] - current_frame, frames)
+            
+            indata = audio_file[current_frame:current_frame + chunksize]
+            if chunksize < frames: 
+                outdata[chunksize:] = 0
+                raise sd.CallbackStop()
+
+            _outdata = np.empty_like(outdata[:chunksize])
+            self.audio_callback(indata, _outdata, frames, time, status)
+            outdata[:chunksize] = _outdata #audio_file[current_frame:current_frame + chunksize]
+
+            current_frame += chunksize
+
+        event = threading.Event()
+        stream = sd.OutputStream(channels=1,
+                                callback=callback,
+                                blocksize=self.process_blocks*self.framelength, 
+                                samplerate=self.fs,
+                                dtype="float32",
+                        finished_callback=event.set)
+        with stream:
+            event.wait()
         self.fs = 44100
         return
 
-        def buffer(nframes):
-            buffer_idx = 0
-            end_idx = min(buffer_idx + nframes,len(audio_file))
-            while end_idx<=len(audio_file):
-                yield audio_file[buffer_idx:end_idx]
-                buffer_idx = end_idx
-
-        def callback(outdata, frames, time, status):
-            indata = buffer(frames)
-            if len(indata) <= 0:
-                raise sd.CallbackAbort
-            if len(outdata) > len(indata):
-                raise sd.CallbackAbort #wrong obviously
-            self.audio_callback(indata, outdata, frames, time, status)
-
-        with sd.OutputStream(channels=1,
-                                callback=callback,
-                                blocksize=self.process_blocks*self.framelength, # TODO HARDCODED Buffer length !!!!
-                                samplerate=self.fs,
-                                dtype="float32") as stream:
-            while stream.active:
-                continue
-
     def audio_callback(self, indata: np.ndarray, outdata: np.ndarray, frames, times, status):
     
-        if len(indata)==0:
+        if indata.shape[0]==0:
             outdata[:]=0
             return
         
@@ -151,8 +161,9 @@ class Resynth:
                                   glottis_shift=glottis_shifts, 
                                   tenseness_factor=tenseness_factor)
 
-        # remove previous ending from signal and keep previous frame
-        self.prev_audio_orig = input_wav[-2*self.framelength:]
+        #  keep previous 2 frames
+        self.prev_audio_orig = input_wav[-2*self.framelength:] 
+        # remove previous ending from signal and extra frame at beginning
         output_wav = output_wav[self.framelength:-self.framelength]
         
         # TODO find a  way to check channels!!!!
@@ -197,23 +208,25 @@ class Resynth:
         # esta pirula de aqui es porque estoy probando ajustarme a un framelength variable
         # para dejar que sounddevice controle la latencia. No funciona todavia
         inner_framelength = self.framelength #min(self.framelength,audio_input.shape[0])
-        default_hopratio = (self.framelength/self.hoplength)
         inner_hoplength = self.hoplength #max(8,inner_framelength/default_hopratio)
-
+        #
+        #
         # first decompose in frames
         input_frames = librosa.util.frame(audio_input, 
                                           frame_length=inner_framelength, 
                                           hop_length=inner_hoplength)
         nframes = input_frames.shape[1]
 
-        # then we get the LPC coefficients
+        # FIRST STAGE 
+        # Get the LPC coefficients
+        #
         vtcoeffs = np.empty((nframes, self.ncilinders+1))
         glcoeffs = np.empty((nframes,4))
         lipcoeffs = np.empty((nframes, 2))
         for i in range(nframes):
             frame = input_frames[:, i]
             vtcoeffs[i,:], glcoeffs[i,:], lipcoeffs[i,:] = gfm_iaif(frame, n_vt=self.ncilinders)
-
+        #
         # let's get the glottis source isolated
         glottis_iaif = np.zeros_like(audio_input)
         #vocalt_iaif = np.zeros_like(audio_input)
@@ -224,9 +237,69 @@ class Resynth:
             glottis_iaif[idx] += scipy.signal.lfilter(vtcoeffs[i,:], [1], framepad)[self.ncilinders+1:] * scipy.signal.get_window("hamming", inner_framelength)
             #vocalt_iaif[idx]  += scipy.signal.lfilter(glcoeffs[i,:], [1], framepad)[self.ncilinders+1:] * scipy.signal.get_window("hamming", inner_framelength)
         glottis_frames = librosa.util.frame(glottis_iaif, frame_length=inner_framelength, hop_length=inner_hoplength)
+        #
+        # and we can now obtain the excitation, removing ALSO the glottis filter
+        # no_glottis = np.zeros_like(audio_input)
+        # for i in range(nframes):  
+        #     frame = glottis_frames[:, i]
+        #     framepad = np.pad(frame, ((0,self.ncilinders+1)), mode='edge')
+        #     idx = np.arange(librosa.frames_to_samples(i, hop_length=inner_hoplength), librosa.frames_to_samples(i, hop_length=inner_hoplength)+inner_framelength)
+        #     no_glottis[idx] += scipy.signal.lfilter(glcoeffs[i,:], [1], framepad)[self.ncilinders+1:] * scipy.signal.get_window("hamming", inner_framelength)
+        # no_glottis_frames = librosa.util.frame(no_glottis, frame_length=inner_framelength, hop_length=inner_hoplength)
 
-        # getting the roots of the vocal tract
+        # # SECOND STAGE 
+        # # Identify the current filter pàrameters (frequencies, etc)
+        # #
+        # # some frames have sound issues and the filters are not physical, we must skip them
         valid_frame_mask = np.empty(nframes)
+
+        # # Glottis roots
+        # glottis_poles = np.empty((nframes,3),dtype=np.complex128)
+        # glottis_phase_poles = np.empty((nframes,1),dtype=np.complex128)
+        # glottis_real_poles = np.empty((nframes,1),dtype=np.complex128)
+        # glottis_frequencies = np.empty((nframes,1))
+        # for n in range(nframes):
+        #     poles = np.roots(glcoeffs[n,:])
+        #     phase_poles = np.array([r for r in poles if np.imag(r) > 0])
+        #     if phase_poles.shape[0]==1:
+        #         glottis_poles[n,:] = poles.copy()        
+        #         glottis_phase_poles[n,:] = phase_poles.copy()
+        #         glottis_real_poles[n,:] = np.array([r for r in poles if np.imag(r) == 0])
+        #         glottis_frequencies[n,:] = np.arctan2(phase_poles.imag, phase_poles.real) * (self.fs / (2 * np.pi))
+        #         valid_frame_mask[n] = True
+        #     else:
+        #         glottis_poles[n,:] = 0  
+        #         glottis_phase_poles[n,:] = 0
+        #         glottis_real_poles[n,:] = 0
+        #         glottis_frequencies[n,:] = 0
+        #         valid_frame_mask[n] = False
+
+        lpc_glottis = np.zeros_like(glcoeffs)
+        for i in range(nframes):
+            frame = glottis_frames[:, i]
+            lpc_glottis[i,:] = librosa.lpc(frame, order=3)
+        # LPC Glottis roots
+        glottis_poles = np.empty((nframes,3),dtype=np.complex128)
+        glottis_phase_poles = np.empty((nframes,1),dtype=np.complex128)
+        glottis_real_poles = np.empty((nframes,1),dtype=np.complex128)
+        glottis_frequencies = np.empty((nframes,1))
+        glottis_qualityfactor = np.empty((nframes,1))
+        for n in range(nframes):
+            poles = np.roots(lpc_glottis[n,:])
+            phase_poles = np.array([r for r in poles if np.imag(r) > 0])
+            if phase_poles.shape[0]==1:
+                glottis_poles[n,:] = poles       
+                glottis_phase_poles[n,:] = phase_poles
+                glottis_real_poles[n,:] = np.array([r for r in poles if np.imag(r) == 0])
+                glottis_frequencies[n,:] = np.arctan2(phase_poles.imag, phase_poles.real) * (self.fs / (2 * np.pi))
+                glottis_qualityfactor[n,:] = np.angle(np.log(phase_poles))
+                valid_frame_mask[n] = True
+            else:
+                valid_frame_mask[n] = False
+
+        glottis_formant = glottis_frequencies.mean()
+        #
+        # Now get the roots of the vocal tract
         # Vocal tract roots
         vt_poles = np.zeros((nframes,self.ncilinders),dtype=np.complex128)
         vt_phase_poles = np.empty((nframes,int(self.ncilinders/2)),dtype=np.complex128)
@@ -249,13 +322,19 @@ class Resynth:
                 vt_frequencies[n,:] = 0
                 valid_frame_mask[n] = False
 
+        # THIRD STAGE: vocal conversion from the input parameters
+        # 
+        # First we convert vocal tract % parameters to frequencies
+        # 
+        vt_shift_hz = self.shifts_to_freqs(vt_shifts, vt_frequencies, glottis_formant)
+        #vt_shift_hz = np.zeros_like(vt_shift_hz)
         # NOW we compute the new vocal tract model
         # by shifting the formants
-        vt_shift = np.array([s*(2*np.pi)/self.fs  for s in vt_shifts ])
+        # 
         new_vt_phase_poles =vt_phase_poles.copy()
         for n in range(nframes):
-            for s,shift in enumerate(vt_shift):
-                new_vt_phase_poles[n,s] = new_vt_phase_poles[n,s]*np.exp(-shift*1j)  # Fs
+            for s,shift in enumerate(vt_shift_hz[n,:]):
+                new_vt_phase_poles[n,s] = new_vt_phase_poles[n,s]*np.exp(shift*1j)  # TODO aqui va con menos o con mas?
 
         new_vt_poles = np.concatenate( (new_vt_phase_poles,
                                             new_vt_phase_poles.conjugate()) , axis=1)
@@ -268,10 +347,10 @@ class Resynth:
             else:
                 new_vtcoeffs[n,:] = vtcoeffs[n,:] # for failed frames we do nothing, might create noise
 
-        if False and tenseness_factor is not None:
+        if tenseness_factor is not None:
             #
             # Change tenseness and vocal force
-            #
+            #        
             f0 = np.concatenate([librosa.yin(input_frames[:,i] / np.max(np.abs(input_frames[:,i])), 
                                              fmin=self.fmin, fmax=self.fmax, frame_length=inner_framelength, hop_length=inner_hoplength, 
                                              sr=self.fs, center=False, trough_threshold=0.1) for i in range(nframes)])
@@ -291,8 +370,12 @@ class Resynth:
                 tenseness = tenseness + (tenseness)*(tenseness_factor)
 
             # make a synthethic glottis from this tenseness
-            synthetic_glottis = Glottis(self.ncilinders, self.fs)
-            glottis_signal = synthetic_glottis.get_waveform(tenseness=torch.Tensor(tenseness), freq=torch.Tensor(f0.reshape(-1, 1)), frame_len=inner_hoplength).detach().numpy()
+            # synthetic_glottis = Glottis(self.ncilinders, self.fs)
+            # glottis_signal = synthetic_glottis.get_waveform(tenseness=torch.Tensor(tenseness), freq=torch.Tensor(f0.reshape(-1, 1)), frame_len=inner_hoplength).detach().numpy()
+            
+            
+
+
             # and here we change the glottis to the synthetic one with different tenseness
             glottis_frames = librosa.util.frame(glottis_signal, frame_length=inner_framelength, hop_length=inner_hoplength)
             
@@ -304,7 +387,7 @@ class Resynth:
             idx = np.arange(librosa.frames_to_samples(i, hop_length=inner_hoplength), librosa.frames_to_samples(i, hop_length=inner_hoplength)+inner_framelength)
             audio_output[idx] += scipy.signal.lfilter([1], new_vtcoeffs[i,:], framepad)[self.ncilinders+1:] * scipy.signal.get_window("hamming", inner_framelength)
 
-        #print(np.sum(np.abs(new_vtcoeffs-vtcoeffs)))
+        print(f"deviation: {np.sum(np.abs(new_vtcoeffs-vtcoeffs))}, masked {sum(valid_frame_mask)/nframes:.2} ")
         #if glottis_shift is None:
         return audio_output
         
@@ -369,6 +452,43 @@ class Resynth:
                 audio_output[idx] += scipy.signal.lfilter([1], new_glcoeffs[i,:], framepad)[self.ncilinders+1:] * scipy.signal.get_window("hamming", inner_framelength)
 
         return audio_output
+
+    def shifts_to_freqs(self, percent_shifts, frequencies_orig, F0): # convert 3 freqs slider of percentage to frequencies
+        percent_shifts = np.array(percent_shifts)*0.99/100 # conversion to -1,1 but not getting quite there so freqz don't overlap
+        frames = frequencies_orig.shape[0]
+        nfreqs = percent_shifts.shape[0]
+        shifts = np.zeros((frames,nfreqs))
+        if percent_shifts[0]<0 and percent_shifts[2]>=0:
+            for n in range(frames): # one conversion per frame
+                F1o, F2o, F3o, F4 = frequencies_orig[n,0:4]
+                F1 = np.interp(percent_shifts[0], [-1,0], [ F0, F1o]   )
+                F3 = np.interp(percent_shifts[1], [0, 1], [ F3o,F4 ] )
+                F2 = np.interp(percent_shifts[2], [-1, 0, 1], [ F1, F2o, F3 ] )
+                shifts[n,:] = [F1-F1o,F2-F2o,F3-F3o]
+        if percent_shifts[0]>=0 and percent_shifts[2]<0:
+            for n in range(frames): # one conversion per frame
+                F1o, F2o, F3o, F4 = frequencies_orig[n,0:4]
+                F2 = np.interp(percent_shifts[1], [-1, 0, 1], [ F1o, F2o, F3o ] )
+                F1 = np.interp(percent_shifts[0], [ 0, 1], [ F1o, F2 ]   )
+                F3 = np.interp(percent_shifts[2], [-1, 0], [ F2, F3o ] )
+                shifts[n,:] = [F1-F1o,F2-F2o,F3-F3o]
+        if percent_shifts[0]<0 and percent_shifts[2]<0:
+            for n in range(frames): # one conversion per frame
+                F1o, F2o, F3o, F4 = frequencies_orig[n,0:4]
+                F1 = np.interp(percent_shifts[0], [-1,0], [ F0, F1o]   )
+                F2 = np.interp(percent_shifts[1], [-1, 0, 1], [ F1, F2o, F3o ] )
+                F3 = np.interp(percent_shifts[2], [-1, 0], [ F2, F3o ] )
+                shifts[n,:] = [F1-F1o,F2-F2o,F3-F3o]
+        if percent_shifts[0]>=0 and percent_shifts[2]>=0:
+            for n in range(frames): # one conversion per frame
+                F1o, F2o, F3o, F4 = frequencies_orig[n,0:4]
+                F3 = np.interp(percent_shifts[2], [0,1], [ F3o, F4 ] )
+                F2 = np.interp(percent_shifts[1], [-1, 0, 1], [ F1o, F2o, F3 ] )
+                F1 = np.interp(percent_shifts[0], [0,1], [ F1o, F2]   )
+                shifts[n,:] = [F1-F1o,F2-F2o,F3-F3o]
+        
+        return shifts*(2*np.pi)/self.fs # convertimos Hz a radianes
+
 
 
 

@@ -5,13 +5,46 @@ import io
 
 driver = GFMDriver()
 
+ui.page_title("Impossible Larynx LPC")
+
 def handle_upload(e):
     data, samplerate = sf.read(io.BytesIO(e.content.read()))
     driver.store_audio(data, samplerate)
     #dialog.open()
 
-ui.label('Voice resynthesis with GFM')
-ui.separator()
+def refresh_devices():
+    driver.refresh_devices()
+    select_input.update()
+    select_output.update()
+
+with ui.dialog() as preferences, ui.card():
+    # cosas a ajustar: framelength, hoplength, volume_reduction, blocks en RT, input_devices???    
+    with ui.column():
+        select_input = ui.select(driver.inputs, label="Input", 
+                                 value=driver.cur_input, on_change=driver.update_selected_input)
+        select_output = ui.select(driver.outputs, label="Output", 
+                                  value=driver.cur_output , on_change=driver.update_selected_output)
+        ui.button(on_click=refresh_devices)
+        ui.separator() 
+        hoplength = ui.select([16, 32, 64, 128, 256, 512], label= "Hop Length", 
+                              value=128, on_change=driver.set_hoplen)
+        framelength = ui.select([64, 128, 256, 512, 1024, 2048], label= "Frame Length", value=512,
+                              on_change=driver.set_framelen)
+        blocks = ui.select([1,2,3,4,5,6,7,8], label= "Blocks", value=1,
+                              on_change=driver.set_blocks)
+ 
+    with ui.row():
+        ui.button('Close', on_click=lambda: preferences.submit(None))
+
+async def show_preferences():
+    result = await preferences
+    if result is not None:
+        ui.notify(f'Funny click?')
+
+with ui.header().classes('justify-between'):
+    ui.label('Impossible Larynx LPC').classes("text-2xl")
+    ui.button(on_click=show_preferences).props('flat color=white icon=settings')
+
 with ui.row().classes('w-full no-wrap'):    
     # left panel
     with ui.column().classes('w-2/6'): # buttons
@@ -28,33 +61,24 @@ with ui.row().classes('w-full no-wrap'):
             ui.upload(on_upload=handle_upload).props('accept=.wav').classes('max-w-full')            
             ui.button('Play audio', on_click=driver.play_audio, color='grey')
 
-        ui.separator() 
-        ui.label("Select input")
-        select_input = ui.select(driver.inputs, value=driver.cur_input, on_change=driver.update_selected_input)
-        ui.label("Select output")
-        select_output = ui.select(driver.outputs, value=driver.cur_output, on_change=driver.update_selected_output)
-        ui.button('Refresh devices', on_click=driver.refresh_devices, color='grey')
-
-    with ui.column().classes('w-2/6'): # sliders 
-# mover F2 entre F1 y F3 (al subir lengua adelante)
-# mover F3 entre F2 y F4 (al bajar cierra labios)
+    with ui.column().classes('w-2/6'): 
         F1_slider = ui.slider(min=-100, max=100, 
                               step=1, value=0).on('update:model-value', 
                                 lambda e: driver.update_F1(e.args),throttle=1.0)
         ui.label().bind_text_from(F1_slider, 'value', 
-                                  backward=lambda n: f'<-- close jaw        F1 %:: {n}          open jaw -->')
+                                  backward=lambda n: f'<-- close jaw               F1 %:: {n}               open jaw -->')
         # ui.label().bind_text_from(F1_slider, 'value')
         F2_slider = ui.slider(min=-100, max=100, step=1, value=0) \
             .on('update:model-value', lambda e: driver.update_F2(e.args),
             throttle=1.0)
         ui.label().bind_text_from(F2_slider, 'value', 
-                                  backward=lambda n: f'<-- tongue forward      F2%::  {n}      tongue backwards')
+                                  backward=lambda n: f'<-- tongue forward               F2%::  {n}               tongue backwards')
         # ui.label().bind_text_from(F1_slider, 'value')
         F3_slider = ui.slider(min=-100, max=100, step=1, value=0) \
             .on('update:model-value', lambda e: driver.update_F3(e.args),
             throttle=1.0)
         ui.label().bind_text_from(F3_slider, 'value', 
-                                  backward=lambda n: f'<-- close lips         F3%:: {n}       open lips -->')
+                                  backward=lambda n: f'<-- close lips               F3%:: {n}               open lips -->')
         
         # ui.label().bind_text_from(F1_slider, 'value')        
         t_switch = ui.switch('Activate tenseness')
