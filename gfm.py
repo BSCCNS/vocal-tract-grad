@@ -4,9 +4,6 @@ import scipy
 
 from gfm_iaif import gfm_iaif
 
-from glottis import Glottis
-import torch
-
 import sounddevice as sd
 
 sd.default.latency = 'low'
