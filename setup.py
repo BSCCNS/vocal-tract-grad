@@ -18,6 +18,9 @@ OPTIONS = {
         'nicegui',
         'soundfile',
     ],
+    # 'frameworks': [
+    #     '/opt/homebrew/opt/portaudio/lib/libportaudio.dylib'
+    # ]
 }
 
 setup(
