@@ -19,12 +19,12 @@ def refresh_devices():
 
 with ui.dialog() as preferences, ui.card():
     # cosas a ajustar: framelength, hoplength, volume_reduction, blocks en RT, input_devices???    
-    with ui.column():
+    with ui.column().classes('w-full no-wrap'):
         select_input = ui.select(driver.inputs, label="Input", 
                                  value=driver.cur_input, on_change=driver.update_selected_input)
         select_output = ui.select(driver.outputs, label="Output", 
                                   value=driver.cur_output , on_change=driver.update_selected_output)
-        ui.button(on_click=refresh_devices)
+        ui.button("Refresh devices",on_click=refresh_devices)
         ui.separator() 
         hoplength = ui.select([16, 32, 64, 128, 256, 512], label= "Hop Length", 
                               value=128, on_change=driver.set_hoplen)
