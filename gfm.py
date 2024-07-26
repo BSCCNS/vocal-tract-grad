@@ -254,48 +254,51 @@ class Resynth:
         valid_frame_mask = np.empty(nframes)
 
         # # Glottis roots
-        # glottis_poles = np.empty((nframes,3),dtype=np.complex128)
-        # glottis_phase_poles = np.empty((nframes,1),dtype=np.complex128)
-        # glottis_real_poles = np.empty((nframes,1),dtype=np.complex128)
-        # glottis_frequencies = np.empty((nframes,1))
-        # for n in range(nframes):
-        #     poles = np.roots(glcoeffs[n,:])
-        #     phase_poles = np.array([r for r in poles if np.imag(r) > 0])
-        #     if phase_poles.shape[0]==1:
-        #         glottis_poles[n,:] = poles.copy()        
-        #         glottis_phase_poles[n,:] = phase_poles.copy()
-        #         glottis_real_poles[n,:] = np.array([r for r in poles if np.imag(r) == 0])
-        #         glottis_frequencies[n,:] = np.arctan2(phase_poles.imag, phase_poles.real) * (self.fs / (2 * np.pi))
-        #         valid_frame_mask[n] = True
-        #     else:
-        #         glottis_poles[n,:] = 0  
-        #         glottis_phase_poles[n,:] = 0
-        #         glottis_real_poles[n,:] = 0
-        #         glottis_frequencies[n,:] = 0
-        #         valid_frame_mask[n] = False
-
-        lpc_glottis = np.zeros_like(glcoeffs)
-        for i in range(nframes):
-            frame = glottis_frames[:, i]
-            lpc_glottis[i,:] = librosa.lpc(frame, order=3)
-        # LPC Glottis roots
         glottis_poles = np.empty((nframes,3),dtype=np.complex128)
         glottis_phase_poles = np.empty((nframes,1),dtype=np.complex128)
         glottis_real_poles = np.empty((nframes,1),dtype=np.complex128)
         glottis_frequencies = np.empty((nframes,1))
         glottis_qualityfactor = np.empty((nframes,1))
         for n in range(nframes):
-            poles = np.roots(lpc_glottis[n,:])
+            poles = np.roots(glcoeffs[n,:])
             phase_poles = np.array([r for r in poles if np.imag(r) > 0])
             if phase_poles.shape[0]==1:
-                glottis_poles[n,:] = poles       
-                glottis_phase_poles[n,:] = phase_poles
+                glottis_poles[n,:] = poles.copy()        
+                glottis_phase_poles[n,:] = phase_poles.copy()
                 glottis_real_poles[n,:] = np.array([r for r in poles if np.imag(r) == 0])
                 glottis_frequencies[n,:] = np.arctan2(phase_poles.imag, phase_poles.real) * (self.fs / (2 * np.pi))
                 glottis_qualityfactor[n,:] = np.angle(np.log(phase_poles))
                 valid_frame_mask[n] = True
             else:
+                glottis_poles[n,:] = 0  
+                glottis_phase_poles[n,:] = 0
+                glottis_real_poles[n,:] = 0
+                glottis_frequencies[n,:] = 0
                 valid_frame_mask[n] = False
+
+        # NEW METHOD ___ DOESNT WORK YET
+        # lpc_glottis = np.zeros_like(glcoeffs)
+        # for i in range(nframes):
+        #     frame = glottis_frames[:, i]
+        #     lpc_glottis[i,:] = librosa.lpc(frame, order=3)
+        # # LPC Glottis roots
+        # glottis_poles = np.empty((nframes,3),dtype=np.complex128)
+        # glottis_phase_poles = np.empty((nframes,1),dtype=np.complex128)
+        # glottis_real_poles = np.empty((nframes,1),dtype=np.complex128)
+        # glottis_frequencies = np.empty((nframes,1))
+        # glottis_qualityfactor = np.empty((nframes,1))
+        # for n in range(nframes):
+        #     poles = np.roots(lpc_glottis[n,:])
+        #     phase_poles = np.array([r for r in poles if np.imag(r) > 0])
+        #     if phase_poles.shape[0]==1:
+        #         glottis_poles[n,:] = poles       
+        #         glottis_phase_poles[n,:] = phase_poles
+        #         glottis_real_poles[n,:] = np.array([r for r in poles if np.imag(r) == 0])
+        #         glottis_frequencies[n,:] = np.arctan2(phase_poles.imag, phase_poles.real) * (self.fs / (2 * np.pi))
+        #         glottis_qualityfactor[n,:] = np.angle(np.log(phase_poles))
+        #         valid_frame_mask[n] = True
+        #     else:
+        #         valid_frame_mask[n] = False
 
         glottis_formant = glottis_frequencies.mean()
         #
