@@ -350,34 +350,68 @@ class Resynth:
             else:
                 new_vtcoeffs[n,:] = vtcoeffs[n,:] # for failed frames we do nothing, might create noise
 
-        if tenseness_factor is not None:
+        if tenseness_factor is not None and tenseness_factor!=0:
             #
             # Change tenseness and vocal force
             #        
-            f0 = np.concatenate([librosa.yin(input_frames[:,i] / np.max(np.abs(input_frames[:,i])), 
-                                             fmin=self.fmin, fmax=self.fmax, frame_length=inner_framelength, hop_length=inner_hoplength, 
-                                             sr=self.fs, center=False, trough_threshold=0.1) for i in range(nframes)])
+            # f0 = np.concatenate([librosa.yin(input_frames[:,i] / np.max(np.abs(input_frames[:,i])), 
+            #                                  fmin=self.fmin, fmax=self.fmax, frame_length=inner_framelength, hop_length=inner_hoplength, 
+            #                                  sr=self.fs, center=False, trough_threshold=0.1) for i in range(nframes)])
             
-            Rd = np.empty(nframes)
-            for i in range(nframes):
-                X = librosa.amplitude_to_db(np.abs(librosa.stft(glottis_frames[:,i], n_fft=inner_framelength, hop_length=inner_framelength)))
-                h1bin = int(np.round(f0[i] / self.fs * inner_framelength))
-                h2bin = int(np.round(2 * f0[i] / self.fs * inner_framelength))
-                Rd[i] = (X[h1bin,1] - X[h2bin,1] + 7.6) / 11.
-            tenseness = np.clip(1 - Rd / 3, 0, 1)
+            # Rd = np.empty(nframes)
+            # for i in range(nframes):
+            #     X = librosa.amplitude_to_db(np.abs(librosa.stft(glottis_frames[:,i], n_fft=inner_framelength, hop_length=inner_framelength)))
+            #     h1bin = int(np.round(f0[i] / self.fs * inner_framelength))
+            #     h2bin = int(np.round(2 * f0[i] / self.fs * inner_framelength))
+            #     Rd[i] = (X[h1bin,1] - X[h2bin,1] + 7.6) / 11.
+            # tenseness = np.clip(1 - Rd / 3, 0, 1)
             #loudness = librosa.feature.rms(y=input, frame_length=inner_framelength, hop_length=inner_hoplength)
+            tenseness = 2*np.log10(glottis_qualityfactor)
 
             if tenseness_factor>0:
-                tenseness = tenseness + (1-tenseness)*(tenseness_factor)
+                tenseness = np.clip(tenseness + (1-tenseness)*(tenseness_factor/100), 0, 1)
             else:
-                tenseness = tenseness + (tenseness)*(tenseness_factor)
+                tenseness = np.clip(tenseness + (tenseness)*(tenseness_factor/100), 0, 1)
+
+            # change the glottis, compute new filter
+            new_quality_factor = np.power(10,(tenseness/2))
+            new_glottis_phase_poles =  np.abs(np.log(glottis_phase_poles))*np.exp(1j*new_quality_factor)
+            
+            new_glottis_poles = np.empty((nframes,3))
+            new_glcoeffs = np.empty((nframes,4))
+
+            new_glottis_poles = np.stack( (new_glottis_phase_poles,
+                                                np.conjugate(new_glottis_phase_poles),
+                                                glottis_real_poles) ).T[0]
+
+            #esto no me funciona, tengo que hacer el loop como un pobre campesino
+            #np.where(valid_frame_mask,np.poly(new_glottis_poles),0)
+            for n in range(nframes):
+                if valid_frame_mask[n]:
+                    new_glcoeffs[n,:] = np.poly(new_glottis_poles[n])
+                else:
+                    new_glcoeffs[n,:] = glcoeffs[n,:]
+
+            # first we remove the old glottis sound
+            no_glottis = np.zeros_like(audio_input)
+            for i in range(nframes):  
+                frame = glottis_frames[:, i]
+                framepad = np.pad(frame, ((0,self.ncilinders+1)), mode='edge')
+                idx = np.arange(librosa.frames_to_samples(i, hop_length=inner_hoplength), librosa.frames_to_samples(i, hop_length=inner_hoplength)+inner_framelength)
+                no_glottis[idx] += scipy.signal.lfilter(glcoeffs[i,:], [1], framepad)[self.ncilinders+1:] * scipy.signal.get_window("hamming", inner_framelength)
+            no_glottis_frames = librosa.util.frame(no_glottis, frame_length=inner_framelength, hop_length=inner_hoplength)
+            # new glottis
+            glottis_signal = np.zeros_like(audio_input)
+            for i in range(nframes):  
+                frame = glottis_frames[:, i]
+                framepad = np.pad(frame, ((0,self.ncilinders+1)), mode='edge')
+                idx = np.arange(librosa.frames_to_samples(i, hop_length=inner_hoplength), librosa.frames_to_samples(i, hop_length=inner_hoplength)+inner_framelength)
+                glottis_signal[idx] += scipy.signal.lfilter([1], new_glcoeffs[i,:], framepad)[self.ncilinders+1:] * scipy.signal.get_window("hamming", inner_framelength)
+
 
             # make a synthethic glottis from this tenseness
             # synthetic_glottis = Glottis(self.ncilinders, self.fs)
             # glottis_signal = synthetic_glottis.get_waveform(tenseness=torch.Tensor(tenseness), freq=torch.Tensor(f0.reshape(-1, 1)), frame_len=inner_hoplength).detach().numpy()
-            
-            
-
 
             # and here we change the glottis to the synthetic one with different tenseness
             glottis_frames = librosa.util.frame(glottis_signal, frame_length=inner_framelength, hop_length=inner_hoplength)
@@ -390,7 +424,7 @@ class Resynth:
             idx = np.arange(librosa.frames_to_samples(i, hop_length=inner_hoplength), librosa.frames_to_samples(i, hop_length=inner_hoplength)+inner_framelength)
             audio_output[idx] += scipy.signal.lfilter([1], new_vtcoeffs[i,:], framepad)[self.ncilinders+1:] * scipy.signal.get_window("hamming", inner_framelength)
 
-        print(f"deviation: {np.sum(np.abs(new_vtcoeffs-vtcoeffs))}, masked {sum(valid_frame_mask)/nframes:.2} ")
+        #print(f"deviation: {np.sum(np.abs(new_vtcoeffs-vtcoeffs))}, masked {sum(valid_frame_mask)/nframes:.2} ")
         #if glottis_shift is None:
         return audio_output
         
