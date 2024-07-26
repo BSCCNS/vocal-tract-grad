@@ -254,14 +254,8 @@ class Resynth:
         # FIRST STAGE
         # Get the LPC coefficients
         #
-        vtcoeffs = np.empty((nframes, self.ncilinders + 1))
-        glcoeffs = np.empty((nframes, 4))
-        lipcoeffs = np.empty((nframes, 2))
-        for i in range(nframes):
-            frame = input_frames[:, i]
-            vtcoeffs[i, :], glcoeffs[i, :], lipcoeffs[i, :] = gfm_iaif(
-                frame, n_vt=self.ncilinders
-            )
+        vtcoeffs, glcoeffs, lipcoeffs = self.estimate_coeffs(audio_input)
+
         #
         # let's get the glottis source isolated
         glottis_iaif = np.zeros_like(audio_input)
@@ -606,6 +600,18 @@ class Resynth:
 
         return shifts * (2 * np.pi) / self.fs  # convertimos Hz a radianes
 
+    def estimate_coeffs(self, data):
+        nframes = data.shape[1]
+
+        vtcoeffs = np.empty((nframes, self.ncilinders + 1))
+        glcoeffs = np.empty((nframes, 4))
+        lipcoeffs = np.empty((nframes, 2))
+
+        for i in range(nframes):
+            frame = data[:, i]
+            vtcoeffs[i, :], glcoeffs[i, :], lipcoeffs[i, :] = gfm_iaif(frame, n_vt=self.ncilinders)
+
+        return vtcoeffs, glcoeffs, lipcoeffs
 
 """
 MORE UNUSED CODE
