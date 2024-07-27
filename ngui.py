@@ -1,4 +1,8 @@
-from nicegui import ui, events
+# required for packaging nicegui
+import multiprocessing
+multiprocessing.freeze_support()
+
+from nicegui import ui, events, native
 from gfmdriver import GFMDriver
 import soundfile as sf
 import io
@@ -102,7 +106,7 @@ with ui.row().classes('w-full no-wrap'):
                     'update:model-value', lambda e: driver.update_knob(n, e.args))
 
 
-ui.run() #(native=True)
+ui.run(native=True, reload=False, port=native.find_open_port())
 
 
 """

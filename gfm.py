@@ -251,45 +251,16 @@ class Resynth:
         )
         nframes = input_frames.shape[1]
 
-        # FIRST STAGE
-        # Get the LPC coefficients
-        #
+        # get the LPC coefficients using the GFM-IAIB method
         vtcoeffs, glcoeffs, lipcoeffs = self.estimate_coeffs(audio_input)
 
-        #
-        # let's get the glottis source isolated
-        glottis_iaif = np.zeros_like(audio_input)
-        # vocalt_iaif = np.zeros_like(audio_input)
-        for i in range(nframes):
-            frame = input_frames[:, i]
-            framepad = np.pad(frame, ((0, self.ncilinders + 1)), mode="edge")
-            idx = np.arange(
-                librosa.frames_to_samples(i, hop_length=inner_hoplength),
-                librosa.frames_to_samples(i, hop_length=inner_hoplength)
-                + inner_framelength,
-            )
-            glottis_iaif[idx] += scipy.signal.lfilter(vtcoeffs[i, :], [1], framepad)[
-                self.ncilinders + 1 :
-            ] * scipy.signal.get_window("hamming", inner_framelength)
-            # vocalt_iaif[idx]  += scipy.signal.lfilter(glcoeffs[i,:], [1], framepad)[self.ncilinders+1:] * scipy.signal.get_window("hamming", inner_framelength)
-        glottis_frames = librosa.util.frame(
-            glottis_iaif, frame_length=inner_framelength, hop_length=inner_hoplength
-        )
-        #
-        # and we can now obtain the excitation, removing ALSO the glottis filter
-        # no_glottis = np.zeros_like(audio_input)
-        # for i in range(nframes):
-        #     frame = glottis_frames[:, i]
-        #     framepad = np.pad(frame, ((0,self.ncilinders+1)), mode='edge')
-        #     idx = np.arange(librosa.frames_to_samples(i, hop_length=inner_hoplength), librosa.frames_to_samples(i, hop_length=inner_hoplength)+inner_framelength)
-        #     no_glottis[idx] += scipy.signal.lfilter(glcoeffs[i,:], [1], framepad)[self.ncilinders+1:] * scipy.signal.get_window("hamming", inner_framelength)
-        # no_glottis_frames = librosa.util.frame(no_glottis, frame_length=inner_framelength, hop_length=inner_hoplength)
+        # isolate glottis signal
+        glottis_signal = self.filter_frames(input_frames, vtcoeffs, np.ones([1]))
+        glottis_frames = librosa.util.frame(glottis_signal, frame_length=self.framelength, hop_length=self.hoplength)
 
-        # # SECOND STAGE
-        # # Identify the current filter pàrameters (frequencies, etc)
-        # #
-        # # some frames have sound issues and the filters are not physical, we must skip them
-        valid_frame_mask = np.empty(nframes)
+        # isolate excitation signal
+        excitation_signal = self.filter_frames(glottis_frames, glcoeffs, np.ones([1]))
+        excitation_frames = librosa.util.frame(excitation_signal, frame_length=self.framelength, hop_length=self.hoplength)
 
         # # Glottis roots
         glottis_poles = np.empty((nframes,3),dtype=np.complex128)
@@ -337,6 +308,12 @@ class Resynth:
         #         valid_frame_mask[n] = True
         #     else:
         #         valid_frame_mask[n] = False
+
+        # NEW METHOD TO
+        # calculate resonant frequency and quality factor from glottis poles
+        #glottis_poles = np.apply_along_axis(np.roots, 1, glcoeffs.astype(np.complex64))
+        #glottis_freqs = np.max(np.angle(glottis_poles), axis=1)
+        #glottis_qs = ...
 
         glottis_formant = glottis_frequencies.mean()
         #
@@ -400,7 +377,6 @@ class Resynth:
         if tenseness_factor is not None and tenseness_factor!=0:
             #
             # Change tenseness and vocal force
-<<<<<<< HEAD
             #        
             # f0 = np.concatenate([librosa.yin(input_frames[:,i] / np.max(np.abs(input_frames[:,i])), 
             #                                  fmin=self.fmin, fmax=self.fmax, frame_length=inner_framelength, hop_length=inner_hoplength, 
@@ -456,46 +432,6 @@ class Resynth:
                 idx = np.arange(librosa.frames_to_samples(i, hop_length=inner_hoplength), librosa.frames_to_samples(i, hop_length=inner_hoplength)+inner_framelength)
                 glottis_signal[idx] += scipy.signal.lfilter([1], new_glcoeffs[i,:], framepad)[self.ncilinders+1:] * scipy.signal.get_window("hamming", inner_framelength)
 
-=======
-            #
-            f0 = np.concatenate(
-                [
-                    librosa.yin(
-                        input_frames[:, i] / np.max(np.abs(input_frames[:, i])),
-                        fmin=self.fmin,
-                        fmax=self.fmax,
-                        frame_length=inner_framelength,
-                        hop_length=inner_hoplength,
-                        sr=self.fs,
-                        center=False,
-                        trough_threshold=0.1,
-                    )
-                    for i in range(nframes)
-                ]
-            )
-
-            Rd = np.empty(nframes)
-            for i in range(nframes):
-                X = librosa.amplitude_to_db(
-                    np.abs(
-                        librosa.stft(
-                            glottis_frames[:, i],
-                            n_fft=inner_framelength,
-                            hop_length=inner_framelength,
-                        )
-                    )
-                )
-                h1bin = int(np.round(f0[i] / self.fs * inner_framelength))
-                h2bin = int(np.round(2 * f0[i] / self.fs * inner_framelength))
-                Rd[i] = (X[h1bin, 1] - X[h2bin, 1] + 7.6) / 11.0
-            tenseness = np.clip(1 - Rd / 3, 0, 1)
-            # loudness = librosa.feature.rms(y=input, frame_length=inner_framelength, hop_length=inner_hoplength)
-
-            if tenseness_factor > 0:
-                tenseness = tenseness + (1 - tenseness) * (tenseness_factor)
-            else:
-                tenseness = tenseness + (tenseness) * (tenseness_factor)
->>>>>>> 3dfd323922bab1e862bb381c0214eac8614e2d64
 
             # make a synthethic glottis from this tenseness
             # synthetic_glottis = Glottis(self.ncilinders, self.fs)
@@ -524,15 +460,8 @@ class Resynth:
                 "hamming", inner_framelength
             )
 
-<<<<<<< HEAD
         #print(f"deviation: {np.sum(np.abs(new_vtcoeffs-vtcoeffs))}, masked {sum(valid_frame_mask)/nframes:.2} ")
         #if glottis_shift is None:
-=======
-        print(
-            f"deviation: {np.sum(np.abs(new_vtcoeffs-vtcoeffs))}, masked {sum(valid_frame_mask)/nframes:.2} "
-        )
-        # if glottis_shift is None:
->>>>>>> 3dfd323922bab1e862bb381c0214eac8614e2d64
         return audio_output
 
         ## else, we continue changing the glottis
@@ -674,6 +603,36 @@ class Resynth:
             vtcoeffs[i, :], glcoeffs[i, :], lipcoeffs[i, :] = gfm_iaif(frame, n_vt=self.ncilinders)
 
         return vtcoeffs, glcoeffs, lipcoeffs
+    
+    def filter_frames(self, data, b, a, framelength=None, hoplength=None):
+        if framelength == None:
+            framelength = self.framelength
+        if hoplength == None:
+            hoplength = self.hoplength
+
+        nframes = data.shape[1]
+
+        if a.ndim == 1:
+            b = np.repeat(np.reshape(b, [1, -1]), nframes, axis=0)
+        if a.ndim == 1:
+            a = np.repeat(np.reshape(a, [1, -1]), nframes, axis=0)
+
+        out = np.zeros_like(data)
+        data = librosa.util.frame(data, frame_length=framelength, hop_length=hoplength)
+
+        for i in range(nframes):
+            frame = data[:, i]
+            framepad = np.pad(frame, ((0, self.ncilinders + 1)), mode="edge")
+            
+            idx = np.arange(
+                librosa.frames_to_samples(i, hop_length=hoplength),
+                librosa.frames_to_samples(i, hop_length=hoplength) + framelength,
+            )
+
+            out[idx] += scipy.signal.lfilter(b[i, :], a[i, :], framepad)[self.ncilinders + 1 :] * scipy.signal.get_window("hamming", framelength)
+
+        return out
+
 
 """
 MORE UNUSED CODE
