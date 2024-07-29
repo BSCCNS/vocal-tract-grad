@@ -39,17 +39,29 @@ class GFMDriver:
         self.cur_output = sel_output.value
         self.model.set_devices(self.cur_input, self.cur_output)  
 
-    def update_F1(self,value):
-        self.model.params['vt_shifts'][0]=value
+    def update_value(self,key, value):
+        if key == "F1":
+            self.model.params['vt_shifts'][0]=value
+        elif key == "F2":
+            self.model.params['vt_shifts'][1]=value
+        elif key == "F3":
+            self.model.params['vt_shifts'][2]=value
+        elif key == "F0":
+            self.model.params['glottis_shifts']=[value]
+        elif key == "tenseness":
+            self.model.params['tenseness_factor']=value
 
-    def update_F2(self,value):
-        self.model.params['vt_shifts'][1]=value
-
-    def update_F3(self,value):
-        self.model.params['vt_shifts'][2]=value
-
-    def update_F0(self,value):
-        self.model.params['glottis_shifts']=[value]
+    def get_value(self,key):
+        if key == "F1":
+            return self.model.params['vt_shifts'][0]
+        elif key == "F2":
+            return self.model.params['vt_shifts'][1]
+        elif key == "F3":
+            return self.model.params['vt_shifts'][2]
+        elif key == "F0":
+            return self.model.params['glottis_shifts']
+        elif key == "tenseness":
+            return self.model.params['tenseness_factor']
 
     def update_tenseness(self,value):
         self.model.params['tenseness_factor']=value
