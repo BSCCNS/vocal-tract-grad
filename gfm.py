@@ -252,7 +252,7 @@ class Resynth:
         nframes = input_frames.shape[1]
 
         # get the LPC coefficients using the GFM-IAIB method
-        vtcoeffs, glcoeffs, lipcoeffs = self.estimate_coeffs(audio_input)
+        vtcoeffs, glcoeffs, lipcoeffs = self.estimate_coeffs(input_frames)
 
         # isolate glottis signal
         glottis_signal = self.filter_frames(input_frames, vtcoeffs, np.ones([1]))
