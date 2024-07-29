@@ -541,7 +541,7 @@ class Resynth:
 
         return vtcoeffs, glcoeffs, lipcoeffs
     
-    def filter_frames(self, data, b, a, framelength=None, hoplength=None):
+    def filter_frames(self, data, b, a, framelength=None, hoplength=None, out=None):
         if framelength == None:
             framelength = self.framelength
         if hoplength == None:
@@ -554,8 +554,14 @@ class Resynth:
         if a.ndim == 1:
             a = np.repeat(np.reshape(a, [1, -1]), nframes, axis=0)
 
-        out = np.zeros_like(data)
-        data = librosa.util.frame(data, frame_length=framelength, hop_length=hoplength)
+        if out == None:
+            if data.ndim == 1:
+                out = np.zeros_like(data)
+            else:
+                out = np.zeros((nframes-1) * hoplength + framelength)
+        
+        if data.ndim == 1:
+            data = librosa.util.frame(data, frame_length=framelength, hop_length=hoplength)
 
         for i in range(nframes):
             frame = data[:, i]
