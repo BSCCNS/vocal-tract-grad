@@ -270,6 +270,7 @@ class Resynth:
         # TODO apply tenseness and vocal effort multipliers
         glottis_poles_pos *= np.exp(1j * glottal_shift) # TODO calculate glottal shift from tenseness and vocal effort/force
         # glottis_poles_real = ... # TODO change tilt calculated from vocal effort/force
+        glottis_poles = np.concatenate((glottis_poles_real, glottis_poles_pos, glottis_poles_pos.conj()), axis=0)
         glottis_coeffs = np.apply_along_axis(np.poly, 1, glottis_poles)
 
         # TODO apply F1, F2, F3 shifts
