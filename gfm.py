@@ -234,257 +234,69 @@ class Resynth:
         return self.input_devices, self.output_devices
 
     def process(
-        self, audio_input, vt_shifts=None, glottis_shift=None, tenseness_factor=None
+        self, audio_input, tract_shifts_per=None, glottis_shift=None, tenseness_mult=None
     ):
-
-        # esta pirula de aqui es porque estoy probando ajustarme a un framelength variable
-        # para dejar que sounddevice controle la latencia. No funciona todavia
-        inner_framelength = (
-            self.framelength
-        )  # min(self.framelength,audio_input.shape[0])
-        inner_hoplength = self.hoplength  # max(8,inner_framelength/default_hopratio)
-        #
-        #
-        # first decompose in frames
+        # partition input in overlapping frames
         input_frames = librosa.util.frame(
-            audio_input, frame_length=inner_framelength, hop_length=inner_hoplength
+            audio_input, frame_length=self.framelength, hop_length=self.hoplength
         )
         nframes = input_frames.shape[1]
 
         # get the LPC coefficients using the GFM-IAIB method
-        vtcoeffs, glcoeffs, lipcoeffs = self.estimate_coeffs(input_frames)
+        tract_coeffs, glottis_coeffs, lip_coeffs = self.estimate_coeffs(input_frames)
 
         # isolate glottis signal
-        glottis_signal = self.filter_frames(input_frames, vtcoeffs, np.ones([1]))
+        glottis_signal = self.filter_frames(input_frames, tract_coeffs, np.ones([1]))
         glottis_frames = librosa.util.frame(glottis_signal, frame_length=self.framelength, hop_length=self.hoplength)
 
         # isolate excitation signal
-        excitation_signal = self.filter_frames(glottis_frames, glcoeffs, np.ones([1]))
+        excitation_signal = self.filter_frames(glottis_frames, glottis_coeffs, np.ones([1]))
         excitation_frames = librosa.util.frame(excitation_signal, frame_length=self.framelength, hop_length=self.hoplength)
 
         # calculate resonant frequency and quality factor from glottis poles
-        glottis_poles = np.apply_along_axis(np.roots, 1, glcoeffs.astype(np.complex64))
-        glottis_freqs = np.max(np.angle(glottis_poles), axis=1)
-        glottis_qs = ...
+        glottis_poles = np.apply_along_axis(np.roots, 1, glottis_coeffs.astype(np.complex64))
+        glottis_poles = np.apply_along_axis(lambda x: x[x.imag.argsort()], 1, glottis_poles)
+        glottis_poles_real = glottis_poles[1,:]
+        glottis_poles_pos = glottis_poles[2,:]
+        glottis_freqs = np.max(np.angle(glottis_poles_pos), axis=1)
+        # glottis_qs = - 1 / np.tan(np.angle(glottis_poles) / 2)
 
-        glottis_formant = glottis_frequencies.mean()
-        #
-        # Now get the roots of the vocal tract
-        # Vocal tract roots
-        vt_poles = np.zeros((nframes, self.ncilinders), dtype=np.complex128)
-        vt_phase_poles = np.empty(
-            (nframes, int(self.ncilinders / 2)), dtype=np.complex128
-        )
-        vt_frequencies = np.empty((nframes, int(self.ncilinders / 2)))
+        # calculate resonant frequencies of vocal tract
+        tract_poles = np.apply_along_axis(np.roots, 1, tract_coeffs.astype(np.complex64)) # TODO .imag > 0
+        tract_poles_pos = tract_poles[tract_poles.imag > 0]
+        tract_freqs = np.max(np.angle(tract_poles_pos), axis=1)
+        # tract_qs = - 1 / np.tan(np.angle(tract_poles) / 2)
 
-        for n in range(nframes):
-            poles = np.roots(vtcoeffs[n, :])
-            phase_poles = np.array([r for r in poles if np.imag(r) > 0])
-            if phase_poles.shape[0] == self.ncilinders / 2:
-                vt_poles[n, :] = poles.copy()
-                vt_phase_poles[n, :] = phase_poles.copy()
-                freqs = np.arctan2(phase_poles.imag, phase_poles.real) * (
-                    self.fs / (2 * np.pi)
-                )
-                idx_sort = freqs.argsort()
-                vt_frequencies[n, :] = freqs[idx_sort].real
-                vt_phase_poles[n, :] = vt_phase_poles[n, :][idx_sort]
-                valid_frame_mask[n] = True
-            else:
-                vt_poles[n, :] = 0
-                vt_phase_poles[n, :] = 0
-                vt_frequencies[n, :] = 0
-                valid_frame_mask[n] = False
+        # TODO apply tenseness and vocal effort multipliers
+        glottis_poles_pos *= np.exp(1j * glottal_shift) # TODO calculate glottal shift from tenseness and vocal effort/force
+        # glottis_poles_real = ... # TODO change tilt calculated from vocal effort/force
+        glottis_coeffs = np.apply_along_axis(np.poly, 1, glottis_poles)
 
-        # THIRD STAGE: vocal conversion from the input parameters
-        #
-        # First we convert vocal tract % parameters to frequencies
-        #
-        vt_shift_hz = self.shifts_to_freqs(vt_shifts, vt_frequencies, glottis_formant)
-        # vt_shift_hz = np.zeros_like(vt_shift_hz)
-        # NOW we compute the new vocal tract model
-        # by shifting the formants
-        #
-        new_vt_phase_poles = vt_phase_poles.copy()
-        for n in range(nframes):
-            for s, shift in enumerate(vt_shift_hz[n, :]):
-                new_vt_phase_poles[n, s] = new_vt_phase_poles[n, s] * np.exp(
-                    shift * 1j
-                )  # TODO aqui va con menos o con mas?
+        # TODO apply F1, F2, F3 shifts
+        f0 = glottis_freqs.mean() # TODO fix f0 estimation
+        vt_shift_hz = self.shifts_to_freqs(tract_shifts_per, tract_freqs, f0) # TODO [para Fernando]
+        tract_poles_pos = np.apply_along_axis(lambda poles: poles * np.exp(1j * shift) , 1, tract_poles_pos) # TODO [para Fernando]
+        tract_poles = np.concatenate((tract_poles_pos, tract_poles_pos.conj()), axis=1)
+        tract_coeffs = np.apply_along_axis(np.poly, 1, tract_poles)
 
-        new_vt_poles = np.concatenate(
-            (new_vt_phase_poles, new_vt_phase_poles.conjugate()), axis=1
-        )
-
-        new_vtcoeffs = np.empty((nframes, self.ncilinders + 1))
-
-        for n in range(nframes):
-            if valid_frame_mask[n]:
-                new_vtcoeffs[n, :] = np.poly(new_vt_poles[n, :])
-            else:
-                new_vtcoeffs[n, :] = vtcoeffs[
-                    n, :
-                ]  # for failed frames we do nothing, might create noise
-
-        if tenseness_factor is not None:
-            #
-            # Change tenseness and vocal force
-            #
-            f0 = np.concatenate(
-                [
-                    librosa.yin(
-                        input_frames[:, i] / np.max(np.abs(input_frames[:, i])),
-                        fmin=self.fmin,
-                        fmax=self.fmax,
-                        frame_length=inner_framelength,
-                        hop_length=inner_hoplength,
-                        sr=self.fs,
-                        center=False,
-                        trough_threshold=0.1,
-                    )
-                    for i in range(nframes)
-                ]
-            )
-
-            Rd = np.empty(nframes)
-            for i in range(nframes):
-                X = librosa.amplitude_to_db(
-                    np.abs(
-                        librosa.stft(
-                            glottis_frames[:, i],
-                            n_fft=inner_framelength,
-                            hop_length=inner_framelength,
-                        )
-                    )
-                )
-                h1bin = int(np.round(f0[i] / self.fs * inner_framelength))
-                h2bin = int(np.round(2 * f0[i] / self.fs * inner_framelength))
-                Rd[i] = (X[h1bin, 1] - X[h2bin, 1] + 7.6) / 11.0
-            tenseness = np.clip(1 - Rd / 3, 0, 1)
-            # loudness = librosa.feature.rms(y=input, frame_length=inner_framelength, hop_length=inner_hoplength)
-
-            if tenseness_factor > 0:
-                tenseness = tenseness + (1 - tenseness) * (tenseness_factor)
-            else:
-                tenseness = tenseness + (tenseness) * (tenseness_factor)
-
-            # make a synthethic glottis from this tenseness
-            # synthetic_glottis = Glottis(self.ncilinders, self.fs)
-            # glottis_signal = synthetic_glottis.get_waveform(tenseness=torch.Tensor(tenseness), freq=torch.Tensor(f0.reshape(-1, 1)), frame_len=inner_hoplength).detach().numpy()
-
-            # and here we change the glottis to the synthetic one with different tenseness
-            glottis_frames = librosa.util.frame(
-                glottis_signal,
-                frame_length=inner_framelength,
-                hop_length=inner_hoplength,
-            )
-
-        # Create the audio with the new vocaltract model
+        # regenerate signal
         audio_output = np.zeros_like(audio_input)
         for i in range(nframes):
-            frame = glottis_frames[:, i]
-            framepad = np.pad(frame, ((0, self.ncilinders + 1)), mode="edge")
+            frame = excitation_frames[:, i]
+            framepad = np.pad(frame, ((0, self.ncilinders + 1)), mode="edge") # TODO remove padding
+
+            coeffs = np.polymul(glottis_coeffs, tract_coeffs)
+
             idx = np.arange(
-                librosa.frames_to_samples(i, hop_length=inner_hoplength),
-                librosa.frames_to_samples(i, hop_length=inner_hoplength)
-                + inner_framelength,
+                librosa.frames_to_samples(i, hop_length=self.hoplength),
+                librosa.frames_to_samples(i, hop_length=self.hoplength)
+                + self.framelength,
             )
             audio_output[idx] += scipy.signal.lfilter(
-                [1], new_vtcoeffs[i, :], framepad
+                [1], coeffs[i, :], framepad
             )[self.ncilinders + 1 :] * scipy.signal.get_window(
-                "hamming", inner_framelength
+                "hamming", self.framelength
             )
-
-        print(
-            f"deviation: {np.sum(np.abs(new_vtcoeffs-vtcoeffs))}, masked {sum(valid_frame_mask)/nframes:.2} "
-        )
-        # if glottis_shift is None:
-        return audio_output
-
-        ## else, we continue changing the glottis
-        # We remove the glottis from the current audio
-        glottis_frames = librosa.util.frame(
-            audio_output, frame_length=inner_framelength, hop_length=inner_hoplength
-        )
-        no_glottis = np.zeros_like(audio_input)
-        for i in range(nframes):
-            frame = glottis_frames[:, i]
-            framepad = np.pad(frame, ((0, self.ncilinders + 1)), mode="edge")
-            idx = np.arange(
-                librosa.frames_to_samples(i, hop_length=inner_hoplength),
-                librosa.frames_to_samples(i, hop_length=inner_hoplength)
-                + inner_framelength,
-            )
-            no_glottis[idx] += scipy.signal.lfilter(glcoeffs[i, :], [1], framepad)[
-                self.ncilinders + 1 :
-            ] * scipy.signal.get_window("hamming", inner_framelength)
-
-        # Glottis roots
-        glottis_poles = np.empty((nframes, 3), dtype=np.complex128)
-        glottis_phase_poles = np.empty((nframes, 1), dtype=np.complex128)
-        glottis_real_poles = np.empty((nframes, 1), dtype=np.complex128)
-        glottis_frequencies = np.empty((nframes, 1))
-        for n in range(nframes):
-            poles = np.roots(glcoeffs[n, :])
-            phase_poles = np.array([r for r in poles if np.imag(r) > 0])
-            if phase_poles.shape[0] == 1:
-                glottis_poles[n, :] = poles.copy()
-                glottis_phase_poles[n, :] = phase_poles.copy()
-                glottis_real_poles[n, :] = np.array(
-                    [r for r in poles if np.imag(r) == 0]
-                )
-                glottis_frequencies[n, :] = np.arctan2(
-                    phase_poles.imag, phase_poles.real
-                ) * (self.fs / (2 * np.pi))
-                valid_frame_mask[n] = True
-            else:
-                glottis_poles[n, :] = 0
-                glottis_phase_poles[n, :] = 0
-                glottis_real_poles[n, :] = 0
-                glottis_frequencies[n, :] = 0
-                valid_frame_mask[n] = False
-
-            # shifting the glottis
-            glottal_shift = glottis_shift * (2 * np.pi) / self.fs
-            new_glottis_phase_poles = np.where(
-                valid_frame_mask,
-                (glottis_phase_poles[:, 0]) * np.exp(glottal_shift * 1j),
-                0,
-            )
-
-            new_glottis_poles = np.empty((nframes, 3))
-            new_glcoeffs = np.empty((nframes, 4))
-
-            new_glottis_poles = np.stack(
-                (
-                    new_glottis_phase_poles,
-                    np.conjugate(new_glottis_phase_poles),
-                    glottis_real_poles[:, 0],
-                )
-            ).T
-            # esto no me funciona, tengo que hacer el loop como un pobre campesino
-            # np.where(valid_frame_mask,np.poly(new_glottis_poles),0)
-            for n in range(nframes):
-                if valid_frame_mask[n]:
-                    new_glcoeffs[n, :] = np.poly(new_glottis_poles[n])
-                else:
-                    new_glcoeffs[n, :] = glcoeffs[n, :]
-
-            # new glottis
-            audio_output = np.zeros_like(audio_input)
-            for i in range(nframes):
-                frame = glottis_frames[:, i]
-                framepad = np.pad(frame, ((0, self.ncilinders + 1)), mode="edge")
-                idx = np.arange(
-                    librosa.frames_to_samples(i, hop_length=inner_hoplength),
-                    librosa.frames_to_samples(i, hop_length=inner_hoplength)
-                    + inner_framelength,
-                )
-                audio_output[idx] += scipy.signal.lfilter(
-                    [1], new_glcoeffs[i, :], framepad
-                )[self.ncilinders + 1 :] * scipy.signal.get_window(
-                    "hamming", inner_framelength
-                )
 
         return audio_output
 
