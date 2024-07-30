@@ -244,6 +244,8 @@ class Resynth:
 
         # get the LPC coefficients using the GFM-IAIB method
         tract_coeffs, glottis_coeffs, lip_coeffs = self.estimate_coeffs(input_frames)
+        old_tract_coeffs = tract_coeffs.copy()
+        old_glottis_coeffs = glottis_coeffs.copy()
 
         # isolate glottis signal
         glottis_signal = self.filter_frames(input_frames, tract_coeffs, np.ones([1]))
@@ -280,29 +282,21 @@ class Resynth:
         # apply F1, F2, F3 shifts
         f0 = glottis_freqs.mean() # TODO fix f0 estimation
         tract_shifts_rad = self.shifts_to_freqs(tract_shifts_per, tract_freqs, f0)
+        tract_shifts_rad *= 1e+3
         tract_poles_pos[:, 0:3] *= np.exp(1j * tract_shifts_rad) # TODO is 0:3 or 1:4
         # tract_poles_pos = np.apply_along_axis(lambda poles: poles * np.exp(1j * tract_shifts_rad) , 1, tract_poles_pos)
         tract_poles = np.concatenate((tract_poles_pos, tract_poles_pos.conj()), axis=1)
         tract_coeffs = np.apply_along_axis(np.poly, 1, tract_poles)
 
         # regenerate signal
-        audio_output = np.zeros_like(audio_input)
-        for i in range(nframes):
-            frame = excitation_frames[:, i]
-            framepad = np.pad(frame, ((0, self.ncilinders + 1)), mode="edge") # TODO remove padding
+        # coeffs = np.array([np.polymul(glottis_coeffs[i, :], tract_coeffs[i, :]) for i in range(nframes)])
+        # old_coeffs = np.array([np.polymul(old_glottis_coeffs[i, :], old_tract_coeffs[i, :]) for i in range(nframes)])
+        coeffs = tract_coeffs # np.ones([nframes, 1])
+        old_coeffs = old_tract_coeffs
+        audio_output = self.filter_frames(input_frames, old_coeffs, coeffs)
 
-            coeffs = np.array([np.polymul(glottis_coeffs[i, :], tract_coeffs[i, :]) for i in range(nframes)])
-
-            idx = np.arange(
-                librosa.frames_to_samples(i, hop_length=self.hoplength),
-                librosa.frames_to_samples(i, hop_length=self.hoplength)
-                + self.framelength,
-            )
-            audio_output[idx] += scipy.signal.lfilter(
-                [1], coeffs[i, :], framepad
-            )[self.ncilinders + 1 :] * scipy.signal.get_window(
-                "hamming", self.framelength
-            )
+        # try renormalizing overlap gain increase
+        audio_output *= self.hoplength / self.framelength
 
         return audio_output
 
