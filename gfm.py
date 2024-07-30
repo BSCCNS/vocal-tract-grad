@@ -263,22 +263,25 @@ class Resynth:
         # glottis_qs = - 1 / np.tan(np.angle(glottis_poles) / 2)
 
         # calculate resonant frequencies of vocal tract
-        assert tract_coeffs.shape[1] % 2 == 0
-        tract_poles = np.apply_along_axis(np.roots, 1, tract_coeffs.astype(np.complex128))
-        tract_poles_pos = np.apply_along_axis(lambda x: x[np.angle(x).argsort()][len(x) // 2:], 1, tract_poles)
+        assert tract_coeffs.shape[1] % 2 == 1
+        tract_poles = np.apply_along_axis(np.roots, 1, tract_coeffs.astype(np.complex128)).astype(np.complex128)
+        # tract_poles = np.array([np.roots(tract_coeffs[i,:]) for i in range(tract_coeffs.shape[0])])
+        tract_poles_pos = np.apply_along_axis(lambda x: x[np.angle(x).argsort()][len(x) // 2:], 1, tract_poles.astype(np.complex128))
         tract_freqs = np.angle(tract_poles_pos)
         # tract_qs = - 1 / np.tan(np.angle(tract_poles) / 2)
 
         # TODO apply tenseness and vocal effort multipliers
-        glottis_poles_pos *= np.exp(1j * glottis_shift) # TODO calculate glottal shift from tenseness and vocal effort/force
-        # glottis_poles_real = ... # TODO change tilt calculated from vocal effort/force
-        glottis_poles = np.concatenate((glottis_poles_real, glottis_poles_pos, glottis_poles_pos.conj()), axis=0)
+        if glottis_shift is not None:
+            glottis_poles_pos *= np.exp(1j * glottis_shift) # TODO calculate glottal shift from tenseness and vocal effort/force
+            # glottis_poles_real = ... # TODO change tilt calculated from vocal effort/force
+        glottis_poles = np.concatenate((glottis_poles_real.reshape((-1,1)), glottis_poles_pos.reshape((-1,1)), glottis_poles_pos.reshape((-1,1)).conj()), axis=1)
         glottis_coeffs = np.apply_along_axis(np.poly, 1, glottis_poles)
 
-        # TODO apply F1, F2, F3 shifts
+        # apply F1, F2, F3 shifts
         f0 = glottis_freqs.mean() # TODO fix f0 estimation
-        vt_shift_hz = self.shifts_to_freqs(tract_shifts_per, tract_freqs, f0) # TODO [para Fernando]
-        tract_poles_pos = np.apply_along_axis(lambda poles: poles * np.exp(1j * shift) , 1, tract_poles_pos) # TODO [para Fernando]
+        tract_shifts_rad = self.shifts_to_freqs(tract_shifts_per, tract_freqs, f0)
+        tract_poles_pos[:, 0:3] *= np.exp(1j * tract_shifts_rad) # TODO is 0:3 or 1:4
+        # tract_poles_pos = np.apply_along_axis(lambda poles: poles * np.exp(1j * tract_shifts_rad) , 1, tract_poles_pos)
         tract_poles = np.concatenate((tract_poles_pos, tract_poles_pos.conj()), axis=1)
         tract_coeffs = np.apply_along_axis(np.poly, 1, tract_poles)
 
@@ -288,7 +291,7 @@ class Resynth:
             frame = excitation_frames[:, i]
             framepad = np.pad(frame, ((0, self.ncilinders + 1)), mode="edge") # TODO remove padding
 
-            coeffs = np.polymul(glottis_coeffs, tract_coeffs)
+            coeffs = np.array([np.polymul(glottis_coeffs[i, :], tract_coeffs[i, :]) for i in range(nframes)])
 
             idx = np.arange(
                 librosa.frames_to_samples(i, hop_length=self.hoplength),
