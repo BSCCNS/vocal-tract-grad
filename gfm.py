@@ -181,9 +181,9 @@ class Resynth:
         #
         output_wav = self.process(
             input_wav,
-            vt_shifts=vt_shifts,
+            tract_shifts_per=vt_shifts,
             glottis_shift=glottis_shifts,
-            tenseness_factor=tenseness_factor,
+            tenseness_mult=tenseness_factor,
         )
 
         #  keep previous 2 frames
