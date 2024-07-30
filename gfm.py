@@ -257,9 +257,9 @@ class Resynth:
         # calculate resonant frequency and quality factor from glottis poles
         glottis_poles = np.apply_along_axis(np.roots, 1, glottis_coeffs.astype(np.complex128))
         glottis_poles = np.apply_along_axis(lambda x: x[x.imag.argsort()], 1, glottis_poles)
-        glottis_poles_real = glottis_poles[1,:]
-        glottis_poles_pos = glottis_poles[2,:]
-        glottis_freqs = np.max(np.angle(glottis_poles_pos), axis=1)
+        glottis_poles_real = glottis_poles[:,1]
+        glottis_poles_pos = glottis_poles[:,2]
+        glottis_freqs = np.angle(glottis_poles_pos)
         # glottis_qs = - 1 / np.tan(np.angle(glottis_poles) / 2)
 
         # calculate resonant frequencies of vocal tract
