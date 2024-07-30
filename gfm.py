@@ -263,9 +263,10 @@ class Resynth:
         # glottis_qs = - 1 / np.tan(np.angle(glottis_poles) / 2)
 
         # calculate resonant frequencies of vocal tract
+        assert tract_coeffs.shape[1] % 2 == 0
         tract_poles = np.apply_along_axis(np.roots, 1, tract_coeffs.astype(np.complex128))
-        tract_poles_pos = tract_poles[tract_poles.imag > 0]
-        tract_freqs = np.max(np.angle(tract_poles_pos), axis=1)
+        tract_poles_pos = np.apply_along_axis(lambda x: x[np.angle(x).argsort()][len(x) // 2:], 1, tract_poles)
+        tract_freqs = np.angle(tract_poles_pos)
         # tract_qs = - 1 / np.tan(np.angle(tract_poles) / 2)
 
         # TODO apply tenseness and vocal effort multipliers
