@@ -42,7 +42,7 @@ class Resynth:
         self.prev_audio_orig = None
         self.params = {
             "vt_shifts": [0, 0, 0],
-            "glottis_shifts": None,
+            "glottis_shifts": 0,
             "tenseness_factor": None,
         }
         self.input_devices = []
@@ -170,7 +170,7 @@ class Resynth:
         if "glottis_shifts" in self.params:
             glottis_shifts = self.params["glottis_shifts"]
         else:
-            glottis_shifts = None
+            glottis_shifts = 0
 
         if "tenseness_factor" in self.params:
             tenseness_factor = self.params["tenseness_factor"]
@@ -181,9 +181,9 @@ class Resynth:
         #
         output_wav = self.process(
             input_wav,
-            vt_shifts=vt_shifts,
-            glottis_shift=glottis_shifts,
-            tenseness_factor=tenseness_factor,
+            tract_shifts_per=vt_shifts,
+            glottis_shifts=glottis_shifts,
+            tenseness_mult=tenseness_factor,
         )
 
         #  keep previous 2 frames
@@ -234,7 +234,7 @@ class Resynth:
         return self.input_devices, self.output_devices
 
     def process(
-        self, audio_input, tract_shifts_per=None, glottis_shift=None, tenseness_mult=None
+        self, audio_input, tract_shifts_per=None, glottis_shifts=None, tenseness_mult=None
     ):
         # partition input in overlapping frames
         input_frames = librosa.util.frame(
@@ -256,31 +256,69 @@ class Resynth:
         # NEW METHOD TO
         # calculate resonant frequency and quality factor from glottis poles
         glottis_poles = np.apply_along_axis(np.roots, 1, glottis_coeffs.astype(np.complex128))
+        # rounding errors have devastating effects
+        glottis_poles = np.where( np.isclose(glottis_poles.imag,0), glottis_poles.real, glottis_poles)
         glottis_poles = np.apply_along_axis(lambda x: x[x.imag.argsort()], 1, glottis_poles)
-        glottis_poles_real = glottis_poles[1,:]
-        glottis_poles_pos = glottis_poles[2,:]
-        glottis_freqs = np.max(np.angle(glottis_poles_pos), axis=1)
-        # glottis_qs = - 1 / np.tan(np.angle(glottis_poles) / 2)
+        valid_glottis_mask = np.apply_along_axis( lambda x: np.sum(x.imag==0), 1, glottis_poles)==1
+        glottis_poles_real = glottis_poles[:,1]
+        glottis_poles_pos = glottis_poles[:,2]
+        glottis_freqs = np.angle(glottis_poles_pos)
 
         # calculate resonant frequencies of vocal tract
-        tract_poles = np.apply_along_axis(np.roots, 1, tract_coeffs.astype(np.complex128)) 
-        tract_poles_pos = tract_poles[tract_poles.imag > 0]
-        tract_freqs = np.max(np.angle(tract_poles_pos), axis=1)
-        # tract_qs = - 1 / np.tan(np.angle(tract_poles) / 2)
+        # Vocal tract roots
+        tract_poles = np.zeros((nframes,self.ncilinders),dtype=np.complex128)
+        tract_poles_pos = np.empty((nframes,int(self.ncilinders/2)),dtype=np.complex128)
+        tract_freqs = np.empty((nframes,int(self.ncilinders/2)))
+        valid_tract_mask = np.empty(nframes)
+        
+        # este loop se hace asi porque si no luego los coeficientes salen complejos
+        for n in range(nframes):    
+            poles = np.roots(tract_coeffs[n,:])
+            phase_poles = np.array([r for r in poles if np.imag(r) > 0])
+            if phase_poles.shape[0] == self.ncilinders/2:
+                tract_poles[n,:] = poles.copy()
+                tract_poles_pos[n,:] = phase_poles.copy()    
+                freqs = np.angle(phase_poles) 
+                idx_sort = freqs.argsort() 
+                tract_freqs[n,:] = freqs[idx_sort].real
+                tract_poles_pos[n,:] = tract_poles_pos[n,:][idx_sort]
+                valid_tract_mask[n] = True
+            else:
+                tract_poles[n,:] = 0
+                tract_poles_pos[n,:] = 0
+                tract_freqs[n,:] = 0
+                valid_tract_mask[n] = False
+
+        new_fancy_code_that_has_precision_problems = """
+        tract_poles = np.apply_along_axis(np.roots, 1, tract_coeffs.astype(np.complex128)) # TODO .imag > 0
+        tract_poles = np.where( np.isclose(tract_poles.imag,0), tract_poles.real, tract_poles)
+        tract_poles = np.apply_along_axis(lambda x: x[x.imag.argsort()], 1, tract_poles)
+        valid_tract_mask = np.apply_along_axis( lambda x: np.sum(x.imag==0), 1, tract_poles)==0
+        tract_poles_pos = tract_poles[:,int(self.ncilinders/2):] # TODO WHAT HAPPENS IF ncil is odd????
+        tract_freqs = np.angle(tract_poles_pos)
+        idxs = np.array([x.argsort() for x in tract_freqs[:]])
+        tract_poles_pos = np.array( [ x[y] for x,y in zip(tract_poles_pos[:],idxs[:]) ])
+        tract_freqs = np.array( [ x[y] for x,y in zip(tract_freqs[:],idxs[:]) ])
+        """
 
         # TODO apply tenseness and vocal effort multipliers
-        glottal_shift = glottis_shift
-        glottis_poles_pos *= np.exp(1j * glottal_shift) # TODO calculate glottal shift from tenseness and vocal effort/force
+        glottis_formant = glottis_freqs.mean()
+        glottal_shift = glottis_formant*glottis_shifts # shift comes in octaves
+        glottis_poles_pos = glottis_poles_pos * np.exp(1j * glottal_shift) # TODO calculate glottal shift from tenseness and vocal effort/force
         # glottis_poles_real = ... # TODO change tilt calculated from vocal effort/force
         glottis_poles = np.stack((glottis_poles_real, glottis_poles_pos, glottis_poles_pos.conj()), axis=0).T
-        glottis_coeffs = np.apply_along_axis(np.poly, 1, glottis_poles)
+        for n in range(glottis_coeffs.shape[0]):
+            if valid_glottis_mask[n]:
+                glottis_coeffs[n,:] = np.poly(glottis_poles[n,:])
 
         # TODO apply F1, F2, F3 shifts
         f0 = glottis_freqs.mean() # TODO fix f0 estimation
-        vt_shift_hz = self.shifts_to_freqs(tract_shifts_per, tract_freqs, f0) # TODO [para Fernando]
-        tract_poles_pos = np.apply_along_axis(lambda poles: poles * np.exp(1j * shift) , 1, tract_poles_pos) # TODO [para Fernando]
+        vt_shift_hz = self.shift_freqs(tract_shifts_per, tract_freqs, f0) # TODO [para Fernando]
+        tract_poles_pos[:,:3] = np.array( [ x[:3]*np.exp(1j*y) for x,y in zip(tract_poles_pos[:], vt_shift_hz[:]) ] )
         tract_poles = np.concatenate((tract_poles_pos, tract_poles_pos.conj()), axis=1)
-        tract_coeffs = np.apply_along_axis(np.poly, 1, tract_poles)
+        for n in range(tract_coeffs.shape[0]):
+            if valid_tract_mask[n]:
+                tract_coeffs[n,:] = np.poly(tract_poles[n,:])
 
         # regenerate signal
         audio_output = np.zeros_like(audio_input)
@@ -288,22 +326,22 @@ class Resynth:
             frame = excitation_frames[:, i]
             framepad = np.pad(frame, ((0, self.ncilinders + 1)), mode="edge") # TODO remove padding
 
-            coeffs = np.polymul(glottis_coeffs, tract_coeffs)
+            coeffs = np.polymul(glottis_coeffs[i,:], tract_coeffs[i,:])
 
             idx = np.arange(
                 librosa.frames_to_samples(i, hop_length=self.hoplength),
-                librosa.frames_to_samples(i, hop_length=self.hoplength)
-                + self.framelength,
+                librosa.frames_to_samples(i, hop_length=self.hoplength) + self.framelength
             )
             audio_output[idx] += scipy.signal.lfilter(
-                [1], coeffs[i, :], framepad
+                [1], coeffs, framepad
             )[self.ncilinders + 1 :] * scipy.signal.get_window(
                 "hamming", self.framelength
             )
 
+        print(f"deviation: {np.sum(np.abs(audio_output-audio_input))} ")
         return audio_output
 
-    def shifts_to_freqs(
+    def shift_freqs(
         self, percent_shifts, frequencies_orig, F0
     ):  # convert 3 freqs slider of percentage to frequencies
         percent_shifts = (
@@ -341,7 +379,7 @@ class Resynth:
                 F1 = np.interp(percent_shifts[0], [0, 1], [F1o, F2])
                 shifts[n, :] = [F1 - F1o, F2 - F2o, F3 - F3o]
 
-        return shifts * (2 * np.pi) / self.fs  # convertimos Hz a radianes
+        return shifts 
 
     def estimate_coeffs(self, data):
         nframes = data.shape[1]
