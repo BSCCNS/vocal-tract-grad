@@ -236,6 +236,7 @@ class Resynth:
         # NEW METHOD TO
         # calculate resonant frequency and quality factor from glottis poles
         glottis_poles = np.apply_along_axis(np.roots, 1, glottis_coeffs.astype(np.complex128))
+        glottis_poles = np.where( np.isclose(glottis_poles.imag,0), glottis_poles.real, glottis_poles)
         glottis_poles = np.apply_along_axis(lambda x: x[x.imag.argsort()], 1, glottis_poles)
         glottis_poles_real = glottis_poles[:,1]
         glottis_poles_pos = glottis_poles[:,2]
@@ -250,9 +251,9 @@ class Resynth:
         tract_freqs = np.angle(tract_poles_pos)
         # tract_qs = - 1 / np.tan(np.angle(tract_poles) / 2)
 
-        # TODO apply tenseness and vocal effort multipliers
-        if glottis_shift is not None:
-            glottis_poles_pos *= np.exp(1j * glottis_shift) # TODO calculate glottal shift from tenseness and vocal effort/force
+        # TODO convert these metrics to tenseness
+        
+        glottis_poles_pos *= np.exp(1j * glottis_shift) # TODO CHECK IF *= works. calculate glottal shift from tenseness and vocal effort/force
             # glottis_poles_real = ... # TODO change tilt calculated from vocal effort/force
         glottis_poles = np.concatenate((glottis_poles_real.reshape((-1,1)), glottis_poles_pos.reshape((-1,1)), glottis_poles_pos.reshape((-1,1)).conj()), axis=1)
         glottis_coeffs = np.apply_along_axis(np.poly, 1, glottis_poles).real # TODO why does it return complex numbers?
@@ -260,8 +261,8 @@ class Resynth:
         # apply F1, F2, F3 shifts
         f0 = glottis_freqs.mean() # TODO fix f0 estimation
         tract_shifts_rad = self.shifts_to_freqs(tract_shifts_per, tract_freqs, f0)
-        tract_shifts_rad *= 1e+3
-        tract_poles_pos[:, 0:3] *= np.exp(1j * tract_shifts_rad) # TODO is 0:3 or 1:4
+        
+        tract_poles_pos[:, 0:3] *= np.exp(1j * tract_shifts_rad)
         # tract_poles_pos = np.apply_along_axis(lambda poles: poles * np.exp(1j * tract_shifts_rad) , 1, tract_poles_pos)
         tract_poles = np.concatenate((tract_poles_pos, tract_poles_pos.conj()), axis=1)
         tract_coeffs = np.apply_along_axis(np.poly, 1, tract_poles)
@@ -312,7 +313,7 @@ class Resynth:
                 F1 = np.interp(percent_shifts[0], [0, 1], [F1o, F2])
                 shifts[n, :] = [F1 - F1o, F2 - F2o, F3 - F3o]
 
-        return shifts * (2 * np.pi) / self.fs  # convertimos Hz a radianes
+        return shifts 
 
     def estimate_coeffs(self, data):
         nframes = data.shape[1]
