@@ -275,7 +275,7 @@ class Resynth:
             glottis_poles_pos *= np.exp(1j * glottis_shift) # TODO calculate glottal shift from tenseness and vocal effort/force
             # glottis_poles_real = ... # TODO change tilt calculated from vocal effort/force
         glottis_poles = np.concatenate((glottis_poles_real.reshape((-1,1)), glottis_poles_pos.reshape((-1,1)), glottis_poles_pos.reshape((-1,1)).conj()), axis=1)
-        glottis_coeffs = np.apply_along_axis(np.poly, 1, glottis_poles)
+        glottis_coeffs = np.apply_along_axis(np.poly, 1, glottis_poles).real # TODO why does it return complex numbers?
 
         # apply F1, F2, F3 shifts
         f0 = glottis_freqs.mean() # TODO fix f0 estimation
