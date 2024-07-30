@@ -374,7 +374,7 @@ class Resynth:
                 out = np.zeros_like(data)
             else:
                 out = np.zeros((nframes-1) * hoplength + framelength)
-        
+
         if data.ndim == 1:
             data = librosa.util.frame(data, frame_length=framelength, hop_length=hoplength)
 
