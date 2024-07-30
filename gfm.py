@@ -258,7 +258,6 @@ class Resynth:
         glottis_phase_poles = np.empty((nframes,1),dtype=np.complex128)
         glottis_real_poles = np.empty((nframes,1),dtype=np.complex128)
         glottis_frequencies = np.empty((nframes,1))
-        glottis_qualityfactor = np.empty((nframes,1))
         for n in range(nframes):
             poles = np.roots(glcoeffs[n,:])
             phase_poles = np.array([r for r in poles if np.imag(r) > 0])
@@ -267,7 +266,6 @@ class Resynth:
                 glottis_phase_poles[n,:] = phase_poles.copy()
                 glottis_real_poles[n,:] = np.array([r for r in poles if np.imag(r) == 0])
                 glottis_frequencies[n,:] = np.arctan2(phase_poles.imag, phase_poles.real) * (self.fs / (2 * np.pi))
-                glottis_qualityfactor[n,:] = np.angle(np.log(phase_poles))
                 valid_frame_mask[n] = True
             else:
                 glottis_poles[n,:] = 0  

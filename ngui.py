@@ -130,18 +130,16 @@ with ui.row().classes('w-full no-wrap'):
                                   backward=lambda n: f'<-- close lips               F3%:: {n}               open lips -->')
         
         # ui.label().bind_text_from(F1_slider, 'value')        
-        t_switch = ui.switch('Activate tenseness')
-        with ui.column().bind_visibility_from(t_switch, 'value'):
-            tenseness_slider = ui.slider(min=-100, max=100, step=1, value=driver.get_value("tenseness")) \
-                .on('update:model-value', lambda e: driver.update_value("tenseness",e.args),
-                throttle=1.0)
-            ui.label().bind_text_from(tenseness_slider, 'value', 
-                                  backward=lambda n: f'Tenseness stretch (-100 to 100):: {n}')
-            vocalness_slider = ui.slider(min=-100, max=100, step=1, value=driver.get_value("F0")) \
-                .on('update:model-value', lambda e: driver.update_value("F0",e.args),
-                throttle=1.0)
-            ui.label().bind_text_from(vocalness_slider, 'value', 
-                                  backward=lambda n: f'Vocalness stretch (-100 to 100):: {n}')
+        tenseness_slider = ui.slider(min=-3, max=3, step=0.1, value=driver.get_value("F0")) \
+            .on('update:model-value', lambda e: driver.update_value("F0",e.args),
+            throttle=1.0)
+        ui.label().bind_text_from(tenseness_slider, 'value', 
+                                backward=lambda n: f'F0 stretch (-3 to +3 octaves):: {n}')
+        vocalness_slider = ui.slider(min=-100, max=100, step=1, value=driver.get_value("F0")) \
+            .on('update:model-value', lambda e: driver.update_value("F0",e.args),
+            throttle=1.0)
+        ui.label().bind_text_from(vocalness_slider, 'value', 
+                                backward=lambda n: f'Vocalness stretch (-100 to 100):: {n}')
 
     #
     # Right panel knobs
