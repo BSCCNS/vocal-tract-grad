@@ -33,7 +33,7 @@ class Resynth:
         self.params = {
             'vt_shifts': [0,0,0],
             'glottis_shifts': 0,
-            'tenseness_factor': None
+            'tilt_factor': None
         }
         self.input_devices = []
         self.output_devices = []
@@ -150,10 +150,10 @@ class Resynth:
         else:
             glottis_shifts = 0
             
-        if "tenseness_factor" in self.params:
-            tenseness_factor = self.params['tenseness_factor']  
+        if "tilt_factor" in self.params:
+            tilt_factor = self.params['tilt_factor']  
         else:
-            tenseness_factor = None
+            tilt_factor = None
         # 
         # call audio processing!!!
         #
@@ -161,7 +161,7 @@ class Resynth:
             input_wav,
             tract_shifts_per=vt_shifts,
             glottis_shift=glottis_shifts,
-            tenseness_mult=tenseness_factor,
+            tilt_factor=tilt_factor,
         )
 
         #  keep previous 2 frames
@@ -206,7 +206,7 @@ class Resynth:
     def get_devices(self):
         return self.input_devices, self.output_devices
     
-    def process(self, audio_input, vt_shifts=None, glottis_shift=None, tenseness_factor=None):
+    def process(self, audio_input, tract_shifts_per=None, glottis_shift=None, tilt_factor=None):
         
         # esta pirula de aqui es porque estoy probando ajustarme a un framelength variable
         # para dejar que sounddevice controle la latencia. No funciona todavia
@@ -252,15 +252,18 @@ class Resynth:
         # tract_qs = - 1 / np.tan(np.angle(tract_poles) / 2)
 
         # TODO convert these metrics to tenseness
-        
-        glottis_poles_pos *= np.exp(1j * glottis_shift) # TODO CHECK IF *= works. calculate glottal shift from tenseness and vocal effort/force
-            # glottis_poles_real = ... # TODO change tilt calculated from vocal effort/force
+        # Glottal shift
+        shift = glottis_shift* glottis_freqs.mean()
+        glottis_poles_pos = glottis_poles_pos*np.exp(1j * shift) # TODO CHECK IF *= works. calculate glottal shift from tenseness and vocal effort/force
+        # Tilt factor
+        glottis_poles_real = glottis_poles_real*tilt_factor
+        # glottis_poles_real = ... # TODO change tilt calculated from vocal effort/force
         glottis_poles = np.concatenate((glottis_poles_real.reshape((-1,1)), glottis_poles_pos.reshape((-1,1)), glottis_poles_pos.reshape((-1,1)).conj()), axis=1)
         glottis_coeffs = np.apply_along_axis(np.poly, 1, glottis_poles).real # TODO why does it return complex numbers?
 
         # apply F1, F2, F3 shifts
-        f0 = glottis_freqs.mean() # TODO fix f0 estimation
-        tract_shifts_rad = self.shifts_to_freqs(tract_shifts_per, tract_freqs, f0)
+        # TODO fix f0 estimation
+        tract_shifts_rad = self.shifts_to_freqs(tract_shifts_per, tract_freqs, glottis_freqs)
         
         tract_poles_pos[:, 0:3] *= np.exp(1j * tract_shifts_rad)
         # tract_poles_pos = np.apply_along_axis(lambda poles: poles * np.exp(1j * tract_shifts_rad) , 1, tract_poles_pos)
@@ -270,16 +273,16 @@ class Resynth:
         # regenerate signal
         # coeffs = np.array([np.polymul(glottis_coeffs[i, :], tract_coeffs[i, :]) for i in range(nframes)])
         # old_coeffs = np.array([np.polymul(old_glottis_coeffs[i, :], old_tract_coeffs[i, :]) for i in range(nframes)])
-        coeffs = tract_coeffs # np.ones([nframes, 1])
-        old_coeffs = old_tract_coeffs
+        coeffs = glottis_coeffs # np.ones([nframes, 1])
+        old_coeffs = old_glottis_coeffs
         audio_output = self.filter_frames(input_frames, old_coeffs, coeffs)
 
         # try renormalizing overlap gain increase
         audio_output *= self.hoplength / self.framelength
-
+        print(np.sum(np.abs(old_coeffs- coeffs)))
         return audio_output
 
-    def shifts_to_freqs(self, percent_shifts, frequencies_orig, F0): # convert 3 freqs slider of percentage to frequencies
+    def shifts_to_freqs(self, percent_shifts, frequencies_orig, Fg): # convert 3 freqs slider of percentage to frequencies
         percent_shifts = np.array(percent_shifts)*0.99/100 # conversion to -1,1 but not getting quite there so freqz don't overlap
         frames = frequencies_orig.shape[0]
         nfreqs = percent_shifts.shape[0]
@@ -287,7 +290,7 @@ class Resynth:
         if percent_shifts[0] < 0 and percent_shifts[2] >= 0:
             for n in range(frames):  # one conversion per frame
                 F1o, F2o, F3o, F4 = frequencies_orig[n, 0:4]
-                F1 = np.interp(percent_shifts[0], [-1, 0], [F0, F1o])
+                F1 = np.interp(percent_shifts[0], [-1, 0], [Fg[n], F1o])
                 F3 = np.interp(percent_shifts[1], [0, 1], [F3o, F4])
                 F2 = np.interp(percent_shifts[2], [-1, 0, 1], [F1, F2o, F3])
                 shifts[n, :] = [F1 - F1o, F2 - F2o, F3 - F3o]
@@ -301,7 +304,7 @@ class Resynth:
         if percent_shifts[0] < 0 and percent_shifts[2] < 0:
             for n in range(frames):  # one conversion per frame
                 F1o, F2o, F3o, F4 = frequencies_orig[n, 0:4]
-                F1 = np.interp(percent_shifts[0], [-1, 0], [F0, F1o])
+                F1 = np.interp(percent_shifts[0], [-1, 0], [Fg[n], F1o])
                 F2 = np.interp(percent_shifts[1], [-1, 0, 1], [F1, F2o, F3o])
                 F3 = np.interp(percent_shifts[2], [-1, 0], [F2, F3o])
                 shifts[n, :] = [F1 - F1o, F2 - F2o, F3 - F3o]
@@ -328,7 +331,7 @@ class Resynth:
 
         return vtcoeffs, glcoeffs, lipcoeffs
     
-    def filter_frames(self, data, b, a, framelength=None, hoplength=None, out=None):
+    def filter_frames(self, data, b, a, framelength=None, hoplength=None):
         if framelength == None:
             framelength = self.framelength
         if hoplength == None:
@@ -341,15 +344,26 @@ class Resynth:
         if a.ndim == 1:
             a = np.repeat(np.reshape(a, [1, -1]), nframes, axis=0)
 
-        if out == None:
-            if data.ndim == 1:
-                out = np.zeros_like(data)
-            else:
-                out = np.zeros((nframes-1) * hoplength + framelength)
+        if data.ndim == 1:
+            out = np.zeros_like(data)
+        else:
+            out = np.zeros((nframes-1) * hoplength + framelength)
 
         if data.ndim == 1:
             data = librosa.util.frame(data, frame_length=framelength, hop_length=hoplength)
 
+        for i in range(nframes):
+            frame = data[:, i]
+            framepad = np.pad(frame, ((0, self.ncilinders + 1)), mode="edge")
+            
+            idx = np.arange(
+                librosa.frames_to_samples(i, hop_length=hoplength),
+                librosa.frames_to_samples(i, hop_length=hoplength) + framelength,
+            )
+
+            out[idx] += scipy.signal.lfilter(b[i, :], a[i, :], framepad)[self.ncilinders + 1 :] * scipy.signal.get_window("hamming", framelength)
+
+        return out
 
 
 

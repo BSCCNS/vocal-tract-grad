@@ -47,9 +47,9 @@ class GFMDriver:
         elif key == "F3":
             self.model.params['vt_shifts'][2]=value
         elif key == "F0":
-            self.model.params['glottis_shifts']=[value]
-        elif key == "tenseness":
-            self.model.params['tenseness_factor']=value
+            self.model.params['glottis_shifts']=value
+        elif key == "tilt":
+            self.model.params['tilt_factor']=value
 
     def get_value(self,key):
         if key == "F1":
@@ -60,11 +60,8 @@ class GFMDriver:
             return self.model.params['vt_shifts'][2]
         elif key == "F0":
             return self.model.params['glottis_shifts']
-        elif key == "tenseness":
-            return self.model.params['tenseness_factor']
-
-    def update_tenseness(self,value):
-        self.model.params['tenseness_factor']=value
+        elif key == "tilt":
+            return self.model.params['tilt_factor']
 
     def update_knob(self, n, value):
         pass
