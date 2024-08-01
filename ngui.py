@@ -31,7 +31,6 @@ def refresh_devices():
                                  value=driver.cur_input)
     select_output.set_options(driver.outputs, 
                                  value=driver.cur_output)
-
 #
 # Seetings dialog
 #
@@ -43,6 +42,7 @@ with ui.dialog() as preferences, ui.card():
         select_output = ui.select(driver.outputs, label="Output", 
                                   value=driver.cur_output , on_change=driver.update_selected_output)
         ui.button("Refresh devices",on_click=refresh_devices).props("push")
+        refresh_devices()
         ui.separator() 
         hoplength = ui.select([16, 32, 64, 128, 256, 512], label= "Hop Length (less is better, more is faster)", 
                               value=128, on_change=driver.set_hoplen).classes('w-full no-wrap')
@@ -96,6 +96,9 @@ with ui.row().classes('w-full no-wrap'):
         ui.button('START', on_click=driver.start_process).props("push")
         ui.button('STOP', on_click=driver.stop_process, color='red').props("push")
 
+        ui.linear_progress().bind_value_from(driver.model.state,'distorsion_glottis')
+        ui.linear_progress().bind_value_from(driver.model.state,'distorsion_tract')
+
         ui.button('Save conf', on_click=driver.save_params, color='grey').props("push")
         ui.button('Load conf', on_click=driver.load_params, color='grey').props("push")
 
@@ -110,36 +113,70 @@ with ui.row().classes('w-full no-wrap'):
     # 
     # Center panel / Sliders
     #
+    def octave_to_factor(n):
+        if n==0:
+            return 1
+        elif n>0:
+            return n+1
+        else:
+            return 1/(1-n)
+    def factor_to_octave(n):
+        if n==1:
+            return 0
+        elif n>1:
+            return (n-1)
+        else:
+            return 1-1/(n)
+        
+
     with ui.column().classes('w-2/6'): 
-        F1_slider = ui.slider(min=-100, max=100, 
+        with ui.grid(columns=8).classes('w-full'):
+            F1_slider = ui.slider(min=-100, max=100, 
                               step=1, value=driver.get_value("F1")).on('update:model-value', 
-                                lambda e: driver.update_value("F1",e.args),throttle=1.0)
-        ui.label().bind_text_from(F1_slider, 'value', 
-                                  backward=lambda n: f'<-- close jaw               F1 %:: {n}               open jaw -->')
+                                lambda e: driver.update_value("F1",e.args),throttle=1.0).classes('col-span-6')
+            ui.button(icon='restart_alt').props('outline round').classes('col-span-1')
+        with ui.grid(columns='auto auto auto').classes('w-full'):
+            ui.label('<-- close jaw')
+            ui.label().bind_text_from(F1_slider, 'value', 
+                                  backward=lambda n: f'F1 %:: {n}')
+            ui.label('open jaw -->')
+            
         # ui.label().bind_text_from(F1_slider, 'value')
-        F2_slider = ui.slider(min=-100, max=100, step=1, value=driver.get_value("F2")) \
+        with ui.grid(columns=8):
+            F2_slider = ui.slider(min=-100, max=100, step=1, value=driver.get_value("F2")) \
             .on('update:model-value', lambda e: driver.update_value("F2",e.args),
-            throttle=1.0)
-        ui.label().bind_text_from(F2_slider, 'value', 
-                                  backward=lambda n: f'<-- tongue forward               F2%::  {n}               tongue backwards')
+            throttle=1.0).classes('col-span-6')
+            ui.button(icon='restart_alt').props('outline round').classes('col-span-1')
+        with ui.grid(columns='auto auto auto'):
+            ui.label('<-- tongue forward')
+            ui.label().bind_text_from(F2_slider, 'value', 
+                                  backward=lambda n: f'F2%::  {n}')
+            ui.label('tongue backwards -->')            
         # ui.label().bind_text_from(F1_slider, 'value')
-        F3_slider = ui.slider(min=-100, max=100, step=1, value=driver.get_value("F3")) \
+        with ui.grid(columns=8):
+            F3_slider = ui.slider(min=-100, max=100, step=1, value=driver.get_value("F3")) \
             .on('update:model-value', lambda e: driver.update_value("F3",e.args),
-            throttle=1.0)
+            throttle=1.0).classes('col-span-6')
+            ui.button(icon='restart_alt').props('outline round').classes('col-span-1')
         ui.label().bind_text_from(F3_slider, 'value', 
                                   backward=lambda n: f'<-- close lips               F3%:: {n}               open lips -->')
         
         # ui.label().bind_text_from(F1_slider, 'value')        
-        tenseness_slider = ui.slider(min=-5, max=5, step=0.1, value=driver.get_value("F0")) \
-            .on('update:model-value', lambda e: driver.update_value("F0",e.args),
-            throttle=1.0)
-        ui.label().bind_text_from(tenseness_slider, 'value', 
-                                backward=lambda n: f'Spectrum tilt (-5 to +5 octaves):: {n}')
-        vocalness_slider = ui.slider(min=-5, max=5, step=0.1, value=driver.get_value("tilt")) \
-            .on('update:model-value', lambda e: driver.update_value("tilt",e.args),
-            throttle=1.0)
-        ui.label().bind_text_from(vocalness_slider, 'value', 
-                                backward=lambda n: f'Vocalness stretch (-100 to 100):: {n}')
+        with ui.grid(columns=8):
+            F0_slider = ui.slider(min=-5, max=5, step=0.1, value=factor_to_octave(driver.get_value("F0"))) \
+            .on('update:model-value', lambda e: driver.update_value("F0",octave_to_factor(e.args)),
+            throttle=1.0).classes('col-span-6')
+            ui.button(icon='restart_alt').props('outline round').classes('col-span-1')
+        ui.label().bind_text_from(F0_slider, 'value', 
+                                backward=lambda n: f'Glottis formant (-5 to +5 octaves):: {n}')
+
+        with ui.grid(columns=8):
+            tilt_slider = ui.slider(min=-5, max=5, step=0.1, value=factor_to_octave(driver.get_value("tilt"))) \
+            .on('update:model-value', lambda e: driver.update_value("tilt",octave_to_factor(e.args)),
+            throttle=1.0).classes('col-span-6')
+            ui.button(icon='restart_alt').props('outline round').classes('col-span-1')
+        ui.label().bind_text_from(tilt_slider, 'value', 
+                                backward=lambda n: f'Glottis tilt (-5 to +5 octaves):: {n}')
 
     #
     # Right panel knobs
@@ -152,7 +189,7 @@ with ui.row().classes('w-full no-wrap'):
                 driver.knobs[n] = ui.knob(0.5, show_value=True).classes('col-span-1').on(
                     'update:model-value', lambda e: driver.update_knob(n, e.args))
 
-ui.run(native=True,  port=native.find_open_port(), reload=False)
+ui.run(native=True,  port=native.find_open_port()) #, reload=False)
 
 
 """

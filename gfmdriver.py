@@ -19,13 +19,13 @@ class GFMDriver:
         self.model.update_devices()
         self.inputs, self.outputs = self.model.get_devices()
         for inp in self.inputs:
-            if inp.find("Headphones")>=0:
+            if inp.find("Microphone")>=0:
                 self.cur_input = inp
                 break
             else:
                 self.cur_input = self.inputs[1]
         for out in self.outputs:
-            if inp.find("Speakers")>=0:
+            if out.find("Headphones")>=0:
                 self.cur_output = out
                 break
             else:
@@ -63,6 +63,9 @@ class GFMDriver:
         elif key == "tilt":
             return self.model.params['tilt_factor']
 
+    def distorsion_measure(self):
+        return self.model.distorsion
+
     def update_knob(self, n, value):
         pass
 
@@ -86,9 +89,11 @@ class GFMDriver:
         self.samplerate = samplerate
         print("STORED",type(self.audio),self.audio.shape,"at",self.samplerate)
 
-    def play_audio(self):        
-        self.model.fs = self.samplerate
-        self.model.play_audio(self.audio)
+    def play_audio(self,actually_play=True):                
+        self.model.play_audio(self.audio,self.samplerate,actually_play)
+
+    def stream_audio(self):                
+        self.model.play_audio(self.audio,self.samplerate)        
 
     def set_framelen(self,val):
         self.model.framelength=val.value
