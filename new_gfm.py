@@ -7,7 +7,7 @@ from gfm_iaif import gfm_iaif
 
 import sounddevice as sd
 
-sd.default.latency = 'low'
+sd.default.latency = "low"
 
 unused = """
 import soundfile as sf
@@ -18,8 +18,18 @@ from optimize import TractControlsOptimizer
 """
 
 current_frame = 0
+
+
 class Resynth:
-    def __init__(self, framelength=1024, hoplength=256, fmin=70, fmax = 500, ncilinders = 44, fs=44100):
+    def __init__(
+        self,
+        framelength=1024,
+        hoplength=256,
+        fmin=70,
+        fmax=500,
+        ncilinders=44,
+        fs=44100,
+    ):
         self.framelength = framelength
         self.hoplength = hoplength
         self.fmin = fmin
@@ -31,32 +41,32 @@ class Resynth:
         self.prev_frames = 2
         self.prev_audio_orig = None
         self.params = {
-            'vt_shifts': [0,0,0],
-            'glottis_shifts': 1,
-            'tilt_factor': 1
+            "vt_shifts": [0, 0, 0],
+            "glottis_shifts": 0,
+            "tenseness_factor": None,
         }
         self.input_devices = []
         self.output_devices = []
         self.input_devices_indices = []
-        self.output_devices_indices = []   
-        self.state = {
-            'distorsion_tract': 0,
-            'distorsion_glottis': 0
-        }
-        self.update_devices()     
+        self.output_devices_indices = []
+        self.update_devices()
 
     def __del__(self) -> None:
         self.stop_stream()
 
     def start_stream(self):
-        self.prev_audio_orig = np.zeros( self.prev_frames * self.framelength, dtype="float32")        
+        self.prev_audio_orig = np.zeros(
+            self.prev_frames * self.framelength, dtype="float32"
+        )
 
         self.stream = sd.Stream(
             channels=1,
             callback=self.audio_callback,
-            blocksize=self.process_blocks*self.framelength, # TODO HARDCODED Buffer length !!!!
+            blocksize=self.process_blocks
+            * self.framelength,  # TODO HARDCODED Buffer length !!!!
             samplerate=self.fs,
-            dtype="float32")
+            dtype="float32",
+        )
         print("Starting stream")
         self.stream.start()
 
@@ -67,132 +77,125 @@ class Resynth:
             self.stream.close()
             self.stream = None
 
-    def get_latency(self):       
+    def get_latency(self):
         if self.stream is not None:
             L = self.stream.latency
-            return L[0]+L[1]
+            return L[0] + L[1]
         else:
             return -1
-    
-    def update_parameter(self,param,value):
+
+    def update_parameter(self, param, value):
         self.params.update({param: value})
 
-    def play_audio(self,audio_file, samplerate, actually_play=True):  # convert an audio file and then play it
-        global current_frame      
-        cur_framerate = self.fs
-        self.fs = samplerate
+    def play_audio(self, audio_file):
+        global current_frame
+        # input_wav = librosa.to_mono(audio_file.T)
+        # # read parameters
+        # if "vt_shifts" in self.params:
+        #     vt_shifts = self.params['vt_shifts']
+        # else:
+        #     vt_shifts = []
 
-        input_wav = librosa.to_mono(audio_file.T)
+        # if "glottis_shifts" in self.params:
+        #     glottis_shifts = self.params['glottis_shifts']
+        # else:
+        #     glottis_shifts = None
 
-        self.prev_audio_orig = np.zeros( self.prev_frames * self.framelength, dtype="float32")  
-        # read parameters
-        if "vt_shifts" in self.params:
-            vt_shifts = self.params['vt_shifts']
-        else:
-            vt_shifts = []
+        # if "tenseness_factor" in self.params:
+        #     tenseness_factor = self.params['tenseness_factor']
+        # else:
+        #     tenseness_factor = None
 
-        if "glottis_shifts" in self.params:
-            glottis_shifts = self.params['glottis_shifts']  
-        else:
-            glottis_shifts = 1
-            
-        if "tilt_factor" in self.params:
-            tilt_factor = self.params['tilt_factor']  
-        else:
-            tilt_factor = 1
-        # 
-        # call audio processing!!!
-        #
-        output_wav = self.process(
-            input_wav,
-            tract_shifts_per=vt_shifts,
-            glottis_shift=glottis_shifts,
-            tilt_factor=tilt_factor,
-        )     
-        if actually_play: 
-            sd.play(output_wav, samplerate=self.fs)
-        self.fs = cur_framerate
-        return
-    
-    def stream_audio(self,audio_file,samplerate):  # stream with a thread
-        global current_frame      
+        # output_wav = self.process(input_wav, vt_shifts=vt_shifts,
+        #                    glottis_shift=glottis_shifts,
+        #                    tenseness_factor=tenseness_factor)
+        # sd.play(output_wav, samplerate=self.fs)
+        # self.fs = 44100
+        # return
+        # TODO Play the file using real time engine and not full file conversion
+
         current_frame = 0
-        cur_framerate = self.fs
-        self.fs = samplerate
 
-        self.prev_audio_orig = np.zeros( self.prev_frames * self.framelength, dtype="float32")        
+        self.prev_audio_orig = np.zeros(
+            self.prev_frames * self.framelength, dtype="float32"
+        )
 
         def callback(outdata, frames, time, status):
             global current_frame
             chunksize = min(audio_file.shape[0] - current_frame, frames)
-            
-            indata = audio_file[current_frame:current_frame + chunksize]
-            if chunksize < frames: 
+
+            indata = audio_file[current_frame : current_frame + chunksize]
+            if chunksize < frames:
                 outdata[chunksize:] = 0
                 raise sd.CallbackStop()
 
             _outdata = np.empty_like(outdata[:chunksize])
             self.audio_callback(indata, _outdata, frames, time, status)
-            outdata[:chunksize] = _outdata #audio_file[current_frame:current_frame + chunksize]
+            outdata[:chunksize] = (
+                _outdata  # audio_file[current_frame:current_frame + chunksize]
+            )
 
             current_frame += chunksize
 
         event = threading.Event()
-        stream = sd.OutputStream(channels=1,
-                                callback=callback,
-                                blocksize=self.process_blocks*self.framelength, 
-                                samplerate=self.fs,
-                                dtype="float32",
-                        finished_callback=event.set)
+        stream = sd.OutputStream(
+            channels=1,
+            callback=callback,
+            blocksize=self.process_blocks * self.framelength,
+            samplerate=self.fs,
+            dtype="float32",
+            finished_callback=event.set,
+        )
         with stream:
             event.wait()
-        self.fs = cur_framerate
+        self.fs = 44100
         return
 
-    def audio_callback(self, indata: np.ndarray, outdata: np.ndarray, frames, times, status):
-    
-        if indata.shape[0]==0:
-            outdata[:]=0
+    def audio_callback(
+        self, indata: np.ndarray, outdata: np.ndarray, frames, times, status
+    ):
+
+        if indata.shape[0] == 0:
+            outdata[:] = 0
             return
-        
-        input_wav = np.concatenate( (self.prev_audio_orig, librosa.to_mono(indata.T)))
+
+        input_wav = np.concatenate((self.prev_audio_orig, librosa.to_mono(indata.T)))
 
         # read parameters
         if "vt_shifts" in self.params:
-            vt_shifts = self.params['vt_shifts']
+            vt_shifts = self.params["vt_shifts"]
         else:
             vt_shifts = []
 
         if "glottis_shifts" in self.params:
-            glottis_shifts = self.params['glottis_shifts']  
+            glottis_shifts = self.params["glottis_shifts"]
         else:
             glottis_shifts = 0
-            
-        if "tilt_factor" in self.params:
-            tilt_factor = self.params['tilt_factor']  
+
+        if "tenseness_factor" in self.params:
+            tenseness_factor = self.params["tenseness_factor"]
         else:
-            tilt_factor = None
-        # 
+            tenseness_factor = None
+        #
         # call audio processing!!!
         #
         output_wav = self.process(
             input_wav,
             tract_shifts_per=vt_shifts,
-            glottis_shift=glottis_shifts,
-            tilt_factor=tilt_factor,
+            glottis_shifts=glottis_shifts,
+            tenseness_mult=tenseness_factor,
         )
 
         #  keep previous 2 frames
-        self.prev_audio_orig = input_wav[-2*self.framelength:] 
+        self.prev_audio_orig = input_wav[-2 * self.framelength :]
         # remove previous ending from signal and extra frame at beginning
-        output_wav = output_wav[self.framelength:-self.framelength]
-        
+        output_wav = output_wav[self.framelength : -self.framelength]
+
         # TODO find a  way to check channels!!!!
         output_wav = output_wav.reshape(outdata.shape)
 
-        #outdata[:] = output_wav
+        # outdata[:] = output_wav
         outdata[:] = output_wav
-
 
     def update_devices(self):
         sd._terminate()
@@ -212,141 +215,145 @@ class Resynth:
             for d in devices
             if d["max_output_channels"] > 0
         ]
-        self.input_devices_indices = [d["index"] for d in devices if d["max_input_channels"] > 0]
+        self.input_devices_indices = [
+            d["index"] for d in devices if d["max_input_channels"] > 0
+        ]
         self.output_devices_indices = [
             d["index"] for d in devices if d["max_output_channels"] > 0
         ]
 
     def set_devices(self, input_device, output_device):
-        sd.default.device[0] = self.input_devices_indices[self.input_devices.index(input_device)]
-        sd.default.device[1] = self.output_devices_indices[self.output_devices.index(output_device)]
+        sd.default.device[0] = self.input_devices_indices[
+            self.input_devices.index(input_device)
+        ]
+        sd.default.device[1] = self.output_devices_indices[
+            self.output_devices.index(output_device)
+        ]
 
     def get_devices(self):
         return self.input_devices, self.output_devices
-    
-    def process(self, audio_input, tract_shifts_per=None, glottis_shift=None, tilt_factor=None):
-        
-        # esta pirula de aqui es porque estoy probando ajustarme a un framelength variable
-        # para dejar que sounddevice controle la latencia. No funciona todavia
-        inner_framelength = self.framelength #min(self.framelength,audio_input.shape[0])
-        inner_hoplength = self.hoplength #max(8,inner_framelength/default_hopratio)
-        #
-        #
-        # first decompose in frames
-        input_frames = librosa.util.frame(audio_input, 
-                                          frame_length=inner_framelength, 
-                                          hop_length=inner_hoplength)
+
+    def process(
+        self, audio_input, tract_shifts_per=None, glottis_shifts=None, tenseness_mult=None
+    ):
+        # partition input in overlapping frames
+        input_frames = librosa.util.frame(
+            audio_input, frame_length=self.framelength, hop_length=self.hoplength
+        )
         nframes = input_frames.shape[1]
 
         # get the LPC coefficients using the GFM-IAIB method
         tract_coeffs, glottis_coeffs, lip_coeffs = self.estimate_coeffs(input_frames)
-        old_tract_coeffs = tract_coeffs.copy()
-        old_glottis_coeffs = glottis_coeffs.copy()
 
-        # remove vocal tract filter, isolate glottis signal
-        glottis_signal = self.filter_frames(input_frames, tract_coeffs, np.ones([1])) 
-        # remove glottis filter, isolate excitation signal
-        excitation_signal = self.filter_frames(glottis_signal, glottis_coeffs, np.ones([1]))
+        # isolate glottis signal
+        glottis_signal = self.filter_frames(input_frames, tract_coeffs, np.ones([1]))
+        glottis_frames = librosa.util.frame(glottis_signal, frame_length=self.framelength, hop_length=self.hoplength)
+
+        # isolate excitation signal
+        excitation_signal = self.filter_frames(glottis_frames, glottis_coeffs, np.ones([1]))
+        excitation_frames = librosa.util.frame(excitation_signal, frame_length=self.framelength, hop_length=self.hoplength)
 
         # NEW METHOD TO
         # calculate resonant frequency and quality factor from glottis poles
         glottis_poles = np.apply_along_axis(np.roots, 1, glottis_coeffs.astype(np.complex128))
+        # rounding errors have devastating effects
         glottis_poles = np.where( np.isclose(glottis_poles.imag,0), glottis_poles.real, glottis_poles)
         glottis_poles = np.apply_along_axis(lambda x: x[x.imag.argsort()], 1, glottis_poles)
-        glottis_poles_real = glottis_poles[:,1].real
+        valid_glottis_mask = np.apply_along_axis( lambda x: np.sum(x.imag==0), 1, glottis_poles)==1
+        glottis_poles_real = glottis_poles[:,1]
         glottis_poles_pos = glottis_poles[:,2]
         glottis_freqs = np.angle(glottis_poles_pos)
-        # glottis_qs = - 1 / np.tan(np.angle(glottis_poles) / 2)
 
         # calculate resonant frequencies of vocal tract
-        assert tract_coeffs.shape[1] % 2 == 1
-
-        # this is how it should be done 
-        # but roots inside apply_along_axis has numerical errors?
-        # tract_poles = np.apply_along_axis(np.roots, 1, tract_coeffs.astype(np.complex128)).astype(np.complex128)
-        # #tract_poles = np.array([np.roots(tract_coeffs[i,:]) for i in range(tract_coeffs.shape[0])])
-        # tract_poles_pos = np.apply_along_axis(lambda x: x[np.angle(x).argsort()][len(x) // 2:], 1, tract_poles.astype(np.complex128))
-        # tract_freqs = np.angle(tract_poles_pos)
-        # tract_qs = - 1 / np.tan(np.angle(tract_poles) / 2)
-
-        # so for now we do it like this
         # Vocal tract roots
         tract_poles = np.zeros((nframes,self.ncilinders),dtype=np.complex128)
         tract_poles_pos = np.empty((nframes,int(self.ncilinders/2)),dtype=np.complex128)
         tract_freqs = np.empty((nframes,int(self.ncilinders/2)))
-        mask = np.empty((nframes))
-        for n in range(nframes):     
+        valid_tract_mask = np.empty(nframes)
+        
+        # este loop se hace asi porque si no luego los coeficientes salen complejos
+        for n in range(nframes):    
             poles = np.roots(tract_coeffs[n,:])
             phase_poles = np.array([r for r in poles if np.imag(r) > 0])
             if phase_poles.shape[0] == self.ncilinders/2:
                 tract_poles[n,:] = poles.copy()
                 tract_poles_pos[n,:] = phase_poles.copy()    
-                freqs = np.arctan2(phase_poles.imag, phase_poles.real) 
+                freqs = np.angle(phase_poles) 
                 idx_sort = freqs.argsort() 
                 tract_freqs[n,:] = freqs[idx_sort].real
                 tract_poles_pos[n,:] = tract_poles_pos[n,:][idx_sort]
-                mask[n]=True
+                valid_tract_mask[n] = True
             else:
                 tract_poles[n,:] = 0
                 tract_poles_pos[n,:] = 0
                 tract_freqs[n,:] = 0
-                mask[n]=False
+                valid_tract_mask[n] = False
 
+        new_fancy_code_that_has_precision_problems = """
+        tract_poles = np.apply_along_axis(np.roots, 1, tract_coeffs.astype(np.complex128)) # TODO .imag > 0
+        tract_poles = np.where( np.isclose(tract_poles.imag,0), tract_poles.real, tract_poles)
+        tract_poles = np.apply_along_axis(lambda x: x[x.imag.argsort()], 1, tract_poles)
+        valid_tract_mask = np.apply_along_axis( lambda x: np.sum(x.imag==0), 1, tract_poles)==0
+        tract_poles_pos = tract_poles[:,int(self.ncilinders/2):] # TODO WHAT HAPPENS IF ncil is odd????
+        tract_freqs = np.angle(tract_poles_pos)
+        idxs = np.array([x.argsort() for x in tract_freqs[:]])
+        tract_poles_pos = np.array( [ x[y] for x,y in zip(tract_poles_pos[:],idxs[:]) ])
+        tract_freqs = np.array( [ x[y] for x,y in zip(tract_freqs[:],idxs[:]) ])
+        """
 
+        # TODO apply tenseness and vocal effort multipliers
+        glottis_formant = glottis_freqs.mean()
+        glottal_shift = glottis_formant*glottis_shifts # shift comes in octaves
+        glottis_poles_pos = glottis_poles_pos * np.exp(1j * glottal_shift) # TODO calculate glottal shift from tenseness and vocal effort/force
+        # glottis_poles_real = ... # TODO change tilt calculated from vocal effort/force
+        glottis_poles = np.stack((glottis_poles_real, glottis_poles_pos, glottis_poles_pos.conj()), axis=0).T
+        for n in range(glottis_coeffs.shape[0]):
+            if valid_glottis_mask[n]:
+                glottis_coeffs[n,:] = np.poly(glottis_poles[n,:])
 
-        # TODO convert these metrics to tenseness
-        if False: # TODO test more the limits of these changes
-            #Glottal shift
-            shift = glottis_shift * glottis_freqs.mean()
-            glottis_poles_pos = glottis_poles_pos*np.exp(1j * shift) # TODO CHECK IF *= works. calculate glottal shift from tenseness and vocal effort/force
-            #Tilt factor
-            glottis_poles_real = glottis_poles_real*tilt_factor
-            glottis_poles_real = ... # TODO change tilt calculated from vocal effort/force
-            glottis_poles = np.concatenate((glottis_poles_real.reshape((-1,1)), glottis_poles_pos.reshape((-1,1)), glottis_poles_pos.reshape((-1,1)).conj()), axis=1)
-            glottis_coeffs = np.apply_along_axis(np.poly, 1, glottis_poles).real # TODO why does it return complex numbers?
-
-        # apply F1, F2, F3 shifts
-        # TODO fix f0 estimation
-        tract_shifts_rad = self.shifts_to_freqs(tract_shifts_per, tract_freqs, glottis_freqs*0)        
-        tract_poles_pos[:, 0:3] *= np.exp(1j * tract_shifts_rad)
-        
+        # TODO apply F1, F2, F3 shifts
+        f0 = glottis_freqs.mean() # TODO fix f0 estimation
+        vt_shift_hz = self.shift_freqs(tract_shifts_per, tract_freqs, f0) # TODO [para Fernando]
+        tract_poles_pos[:,:3] = np.array( [ x[:3]*np.exp(1j*y) for x,y in zip(tract_poles_pos[:], vt_shift_hz[:]) ] )
         tract_poles = np.concatenate((tract_poles_pos, tract_poles_pos.conj()), axis=1)
-        
-        # correct way:
-        # tract_coeffs = np.apply_along_axis(np.poly, 1, tract_poles) 
-        # wrong way but works:
-        for n in range(nframes):
-            if mask[n]:
+        for n in range(tract_coeffs.shape[0]):
+            if valid_tract_mask[n]:
                 tract_coeffs[n,:] = np.poly(tract_poles[n,:])
-        
-        # measure distorsion, some how
-        distorsion_glottis = np.sum(np.abs(old_glottis_coeffs-glottis_coeffs))/np.sum(np.abs(old_glottis_coeffs))
-        distorsion_tract = np.sum(np.abs(old_tract_coeffs-tract_coeffs))/np.sum(np.abs(old_tract_coeffs))
-        self.state['distorsion_glottis'] = float(distorsion_glottis)
-        self.state['distorsion_tract'] = float(distorsion_tract)
 
         # regenerate signal
-        # fancy new method with denominator and numerator in the filter
-        # audio_output = self.filter_frames(input_frames, old_coeffs, coeffs)
-        # old method of applying two filters
-        new_glottis = self.filter_frames(excitation_signal, np.ones([1]), glottis_coeffs)
-        new_glottis_frames = librosa.util.frame(new_glottis, frame_length=self.framelength, hop_length=self.hoplength)
-        audio_output = self.filter_frames(new_glottis_frames, np.ones([1]), tract_coeffs)
-        
-        # try renormalizing overlap gain increase
-        audio_output *= (self.hoplength / self.framelength)**2
-        
+        audio_output = np.zeros_like(audio_input)
+        for i in range(nframes):
+            frame = excitation_frames[:, i]
+            framepad = np.pad(frame, ((0, self.ncilinders + 1)), mode="edge") # TODO remove padding
+
+            coeffs = np.polymul(glottis_coeffs[i,:], tract_coeffs[i,:])
+
+            idx = np.arange(
+                librosa.frames_to_samples(i, hop_length=self.hoplength),
+                librosa.frames_to_samples(i, hop_length=self.hoplength) + self.framelength
+            )
+            audio_output[idx] += scipy.signal.lfilter(
+                [1], coeffs, framepad
+            )[self.ncilinders + 1 :] * scipy.signal.get_window(
+                "hamming", self.framelength
+            )
+
+        print(f"deviation: {np.sum(np.abs(audio_output-audio_input))} ")
         return audio_output
 
-    def shifts_to_freqs(self, percent_shifts, frequencies_orig, Fg): # convert 3 freqs slider of percentage to frequencies
-        percent_shifts = np.array(percent_shifts)*0.99/100 # conversion to -1,1 but not getting quite there so freqz don't overlap
+    def shift_freqs(
+        self, percent_shifts, frequencies_orig, F0
+    ):  # convert 3 freqs slider of percentage to frequencies
+        percent_shifts = (
+            np.array(percent_shifts) * 0.99 / 100
+        )  # conversion to -1,1 but not getting quite there so freqz don't overlap
         frames = frequencies_orig.shape[0]
         nfreqs = percent_shifts.shape[0]
         shifts = np.zeros((frames, nfreqs))
         if percent_shifts[0] < 0 and percent_shifts[2] >= 0:
             for n in range(frames):  # one conversion per frame
                 F1o, F2o, F3o, F4 = frequencies_orig[n, 0:4]
-                F1 = np.interp(percent_shifts[0], [-1, 0], [Fg[n], F1o])
+                F1 = np.interp(percent_shifts[0], [-1, 0], [F0, F1o])
                 F3 = np.interp(percent_shifts[1], [0, 1], [F3o, F4])
                 F2 = np.interp(percent_shifts[2], [-1, 0, 1], [F1, F2o, F3])
                 shifts[n, :] = [F1 - F1o, F2 - F2o, F3 - F3o]
@@ -360,7 +367,7 @@ class Resynth:
         if percent_shifts[0] < 0 and percent_shifts[2] < 0:
             for n in range(frames):  # one conversion per frame
                 F1o, F2o, F3o, F4 = frequencies_orig[n, 0:4]
-                F1 = np.interp(percent_shifts[0], [-1, 0], [Fg[n], F1o])
+                F1 = np.interp(percent_shifts[0], [-1, 0], [F0, F1o])
                 F2 = np.interp(percent_shifts[1], [-1, 0, 1], [F1, F2o, F3o])
                 F3 = np.interp(percent_shifts[2], [-1, 0], [F2, F3o])
                 shifts[n, :] = [F1 - F1o, F2 - F2o, F3 - F3o]
@@ -387,42 +394,40 @@ class Resynth:
 
         return vtcoeffs, glcoeffs, lipcoeffs
     
-    def filter_frames(self, data, b, a, framelength=None, hoplength=None):
-        if framelength is None:
+    def filter_frames(self, data, b, a, framelength=None, hoplength=None, out=None):
+        if framelength == None:
             framelength = self.framelength
-        if hoplength is None:
+        if hoplength == None:
             hoplength = self.hoplength
 
-        if data.ndim == 1:
-            data = librosa.util.frame(data, frame_length=framelength, hop_length=hoplength)
         nframes = data.shape[1]
 
-        if b.ndim == 1:
+        if a.ndim == 1:
             b = np.repeat(np.reshape(b, [1, -1]), nframes, axis=0)
         if a.ndim == 1:
             a = np.repeat(np.reshape(a, [1, -1]), nframes, axis=0)
 
-        # TODO: Esta dimension no se cuanto deberia ser si a y b tienen dims diferentes...
-        filter_dim = max(b.shape[1],a.shape[1])
+        if out == None:
+            if data.ndim == 1:
+                out = np.zeros_like(data)
+            else:
+                out = np.zeros((nframes-1) * hoplength + framelength)
         
         if data.ndim == 1:
-            out = np.zeros_like(data)
-        else:
-            out = np.zeros((nframes-1) * hoplength + framelength)
+            data = librosa.util.frame(data, frame_length=framelength, hop_length=hoplength)
 
         for i in range(nframes):
             frame = data[:, i]
-            framepad = np.pad(frame, ((0, filter_dim)), mode="edge")
+            framepad = np.pad(frame, ((0, self.ncilinders + 1)), mode="edge")
             
             idx = np.arange(
                 librosa.frames_to_samples(i, hop_length=hoplength),
                 librosa.frames_to_samples(i, hop_length=hoplength) + framelength,
             )
 
-            out[idx] += scipy.signal.lfilter(b[i, :], a[i, :], framepad)[filter_dim :] * scipy.signal.get_window("hamming", framelength)
+            out[idx] += scipy.signal.lfilter(b[i, :], a[i, :], framepad)[self.ncilinders + 1 :] * scipy.signal.get_window("hamming", framelength)
 
         return out
-
 
 
 """
@@ -585,92 +590,4 @@ def set_devices(self, input_device, output_device):
 # mover F3 entre F2 y F4 (al bajar cierra labios)
 #
 # Subir vocal force (higher glottal formant, higher tilt)
-# Tenseness wider/higher glotal formant
-# 
-# 
-
-
-
-
-
-
-
-        # isolate glottis signal
-        #glottis_signal = self.filter_frames(input_frames, tract_coeffs, np.ones([1])) ## TODO volver
-        glottis_signal = np.zeros_like(audio_input)
-        for i in range(nframes):
-            frame = input_frames[:, i]
-            framepad = np.pad(frame, ((0, self.ncilinders + 1)), mode="edge")
-            
-            idx = np.arange(
-                librosa.frames_to_samples(i, hop_length=self.hoplength),
-                librosa.frames_to_samples(i, hop_length=self.hoplength) + self.framelength,
-            )
-
-            glottis_signal[idx] += scipy.signal.lfilter(tract_coeffs[i, :], [1], framepad)[self.ncilinders + 1 :] * scipy.signal.get_window("hamming", self.framelength)
-        ###
-        glottis_frames = librosa.util.frame(glottis_signal, frame_length=self.framelength, hop_length=self.hoplength)
-
-        # isolate excitation signal
-        # TODO volver excitation_signal = self.filter_frames(glottis_frames, glottis_coeffs, np.ones([1]))
-        excitation_signal = np.zeros_like(audio_input)
-        for i in range(nframes):
-            frame = glottis_frames[:, i]
-            framepad = np.pad(frame, ((0, 3 + 1)), mode="edge")
-            
-            idx = np.arange(
-                librosa.frames_to_samples(i, hop_length=self.hoplength),
-                librosa.frames_to_samples(i, hop_length=self.hoplength) + self.framelength,
-            )
-
-            excitation_signal[idx] += scipy.signal.lfilter(glottis_coeffs[i, :], [1], framepad)[3 + 1 :] * scipy.signal.get_window("hamming", self.framelength)
-        ###        
-        excitation_frames = librosa.util.frame(excitation_signal, frame_length=self.framelength, hop_length=self.hoplength)
-
-
-        # TODO vovler 
-        # excitation_frames = librosa.util.frame(excitation_signal, frame_length=self.framelength, hop_length=self.hoplength)
-        # new_glottis = self.filter_frames(excitation_frames, np.ones([1]), old_glottis_coeffs)
-        new_glottis_signal = np.zeros_like(audio_input)
-        for i in range(nframes):
-            frame = excitation_frames[:, i]
-            framepad = np.pad(frame, ((0, 3 + 1)), mode="edge")
-            
-            idx = np.arange(
-                librosa.frames_to_samples(i, hop_length=self.hoplength),
-                librosa.frames_to_samples(i, hop_length=self.hoplength) + self.framelength,
-            )
-
-            new_glottis_signal[idx] += scipy.signal.lfilter([1], glottis_coeffs[i, :], framepad)[3 + 1 :] * scipy.signal.get_window("hamming", self.framelength)
-        ###        
-        
-        new_glottis_frames = librosa.util.frame(new_glottis_signal, frame_length=self.framelength, hop_length=self.hoplength)
-        # TODO volver 
-        # audio_output = self.filter_frames(new_glottis_frames, np.ones([1]), old_tract_coeffs)
-        audio_output = np.zeros_like(audio_input)
-        for i in range(nframes):
-            frame = new_glottis_frames[:, i]
-            framepad = np.pad(frame, ((0, self.ncilinders + 1)), mode="edge")
-            
-            idx = np.arange(
-                librosa.frames_to_samples(i, hop_length=self.hoplength),
-                librosa.frames_to_samples(i, hop_length=self.hoplength) + self.framelength,
-            )
-
-            audio_output[idx] += scipy.signal.lfilter([1], tract_coeffs[i, :], framepad)[self.ncilinders + 1 :] * scipy.signal.get_window("hamming", self.framelength)
-        ###         
-        
-        
-        
-        # try renormalizing overlap gain increase
-        audio_output *= self.hoplength / self.framelength
-        # audio_output = audio_input.copy()
-        return audio_output
-
-
-
-
-
-
-
-"""
+# Tenseness wider/higher glotal formant"""
